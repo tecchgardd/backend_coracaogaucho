@@ -28,6 +28,9 @@ export function createApp() {
   );
 
   app.use(helmet());
+  app.get("/", (_req, res) => {
+    res.json({ name: "Coração Gaúcho API", status: "ok", health: "/api/health" });
+  });
   app.use("/api/auth/sign-up", (req, res, next) => {
     if (env.ALLOW_PUBLIC_SIGNUP || req.originalUrl.startsWith("/api/auth/sign-up/email")) return next();
     return res.status(403).json({ message: "Cadastro público desabilitado" });
@@ -43,3 +46,7 @@ export function createApp() {
 
   return app;
 }
+
+const app = createApp();
+
+export default app;
