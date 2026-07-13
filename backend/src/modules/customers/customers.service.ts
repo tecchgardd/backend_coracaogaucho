@@ -57,6 +57,7 @@ export const customersService = {
         cpf: data.cpf,
         telefone: data.telefone,
         email: data.email || undefined,
+        cep: data.cep,
         cidade: data.cidade,
         endereco: mapAddress(data)
       }
@@ -72,6 +73,7 @@ export const customersService = {
         cpf: data.cpf,
         telefone: data.telefone,
         email: data.email || undefined,
+        cep: data.cep,
         cidade: data.cidade,
         endereco: mapAddress(data)
       }

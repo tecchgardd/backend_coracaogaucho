@@ -19,20 +19,41 @@ function statusLabel(status?: string | null) {
   return labels[String(status)] ?? status ?? "Pendente";
 }
 
+function profileComplete(customer: {
+  cpf: string; telefone: string; dataNascimento: Date | null; sexo: string | null; cep: string | null;
+  endereco: string | null; numero: string | null; bairro: string | null; estado: string | null; cidade: string | null;
+} | null | undefined) {
+  return Boolean(customer?.cpf && customer.telefone && customer.dataNascimento && customer.sexo && customer.cep && customer.endereco && customer.numero && customer.bairro && customer.estado && customer.cidade);
+}
+
+function profileResponse(user: { id: string; name: string; email: string; phone: string | null; customer: {
+  cpf: string; telefone: string; dataNascimento: Date | null; sexo: string | null; cep: string | null; endereco: string | null;
+  numero: string | null; complemento: string | null; bairro: string | null; estado: string | null; cidade: string | null;
+} | null }) {
+  return {
+    userId: user.id,
+    name: user.name,
+    email: user.email,
+    phone: user.customer?.telefone ?? user.phone ?? "",
+    cpf: user.customer?.cpf ?? "",
+    birthDate: user.customer?.dataNascimento?.toISOString().slice(0, 10) ?? "",
+    gender: user.customer?.sexo ?? "",
+    cep: user.customer?.cep ?? "",
+    address: user.customer?.endereco ?? "",
+    number: user.customer?.numero ?? "",
+    complement: user.customer?.complemento ?? "",
+    neighborhood: user.customer?.bairro ?? "",
+    state: user.customer?.estado ?? "",
+    city: user.customer?.cidade ?? "",
+    complete: profileComplete(user.customer)
+  };
+}
+
 export const meService = {
   async profile(session: CustomerSession) {
     const user = await prisma.user.findUnique({ where: { id: session.userId }, include: { customer: true } });
     if (!user) throw new AppError("Usuario nao encontrado", 404);
-    return {
-      userId: user.id,
-      name: user.name,
-      email: user.email,
-      phone: user.customer?.telefone ?? user.phone ?? "",
-      cpf: user.customer?.cpf ?? "",
-      address: user.customer?.endereco ?? "",
-      city: user.customer?.cidade ?? "",
-      complete: Boolean(user.customer?.cpf && user.customer.telefone)
-    };
+    return profileResponse(user);
   },
 
   async updateProfile(session: CustomerSession, data: z.infer<typeof profileUpdateSchema>) {
@@ -41,14 +62,15 @@ export const meService = {
     const customer = await prisma.$transaction(async (tx) => {
       await tx.user.update({ where: { id: session.userId }, data: { name: data.name, phone: data.phone } });
       if (session.customerId) {
-        return tx.customer.update({ where: { id: session.customerId }, data: { nome: data.name, cpf: data.cpf, telefone: data.phone, email: session.email, endereco: data.address, cidade: data.city } });
+        return tx.customer.update({ where: { id: session.customerId }, data: { nome: data.name, cpf: data.cpf, telefone: data.phone, email: session.email, dataNascimento: data.birthDate, sexo: data.gender, cep: data.cep, endereco: data.address, numero: data.number, complemento: data.complement, bairro: data.neighborhood, estado: data.state, cidade: data.city } });
       }
       if (conflicting) {
-        return tx.customer.update({ where: { id: conflicting.id }, data: { userId: session.userId, nome: data.name, telefone: data.phone, email: session.email, endereco: data.address, cidade: data.city } });
+        return tx.customer.update({ where: { id: conflicting.id }, data: { userId: session.userId, nome: data.name, telefone: data.phone, email: session.email, dataNascimento: data.birthDate, sexo: data.gender, cep: data.cep, endereco: data.address, numero: data.number, complemento: data.complement, bairro: data.neighborhood, estado: data.state, cidade: data.city } });
       }
-      return tx.customer.create({ data: { userId: session.userId, nome: data.name, cpf: data.cpf, telefone: data.phone, email: session.email, endereco: data.address, cidade: data.city } });
+      return tx.customer.create({ data: { userId: session.userId, nome: data.name, cpf: data.cpf, telefone: data.phone, email: session.email, dataNascimento: data.birthDate, sexo: data.gender, cep: data.cep, endereco: data.address, numero: data.number, complemento: data.complement, bairro: data.neighborhood, estado: data.state, cidade: data.city } });
     });
-    return { ...customer, email: session.email, complete: true };
+    const user = await prisma.user.findUniqueOrThrow({ where: { id: session.userId }, include: { customer: true } });
+    return profileResponse(user);
   },
 
   async validateCart(cart: Cart) {
@@ -97,6 +119,8 @@ export const meService = {
 
   async checkout(session: CustomerSession, cart: Cart) {
     if (!session.customerId) throw new AppError("Complete seu perfil antes de finalizar", 422);
+    const customer = await prisma.customer.findUnique({ where: { id: session.customerId } });
+    if (!profileComplete(customer)) throw new AppError("Complete todos os dados obrigatorios do perfil antes de finalizar", 422);
     const validation = await this.validateCart(cart);
     if (validation.invalidItems.length || !validation.validItems.length) throw new AppError("Carrinho possui itens indisponiveis", 409, validation);
     const eventIds = validation.validItems.map((item) => Number(item.eventId));

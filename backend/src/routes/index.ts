@@ -20,12 +20,14 @@ import { uploadsRoutes } from "../modules/uploads/uploads.routes.js";
 import { empresasRoutes } from "../modules/empresas/empresas.routes.js";
 import { publicRoutes } from "../modules/public/public.routes.js";
 import { meRoutes } from "../modules/me/me.routes.js";
+import { customerAuthRoutes } from "../modules/customer-auth/customer-auth.routes.js";
 
 export const routes = Router();
 
 routes.get("/health", (_req, res) => res.json({ ok: true }));
 routes.use("/webhooks", webhooksRoutes);
 routes.use("/public", publicRoutes);
+routes.use("/customer-auth", customerAuthRoutes);
 routes.use("/me", meRoutes);
 
 routes.use("/admin/dashboard", authMiddleware, requireRoles("ADMIN", "STAFF"), dashboardRoutes);

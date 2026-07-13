@@ -14,8 +14,15 @@ model Customer {
   cpf         String       @unique
   telefone    String
   email       String?
+  cep         String?
   endereco    String?
+  numero      String?
+  complemento String?
+  bairro      String?
   cidade      String?
+  estado      String?
+  dataNascimento DateTime? @db.Date
+  sexo        String?
   createdAt   DateTime     @default(now()) @db.Timestamp(6)
   updatedAt   DateTime     @default(now()) @db.Timestamp(6)
   ingresso    Ingresso[]
