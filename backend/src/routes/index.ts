@@ -1,0 +1,46 @@
+import { Router } from "express";
+import { authMiddleware } from "../middlewares/auth.middleware.js";
+import { requireRoles } from "../middlewares/role.middleware.js";
+import { dashboardRoutes } from "../modules/dashboard/dashboard.routes.js";
+import { eventosRoutes } from "../modules/eventos/eventos.routes.js";
+import { ingressosRoutes } from "../modules/ingressos/ingressos.routes.js";
+import { inscricoesRoutes } from "../modules/inscricoes/inscricoes.routes.js";
+import { customersRoutes } from "../modules/customers/customers.routes.js";
+import { pagamentosRoutes } from "../modules/pagamentos/pagamentos.routes.js";
+import { pedidosRoutes } from "../modules/pedidos/pedidos.routes.js";
+import { cortesiasRoutes } from "../modules/cortesias/cortesias.routes.js";
+import { scannerRoutes } from "../modules/scanner/scanner.routes.js";
+import { relatoriosRoutes } from "../modules/relatorios/relatorios.routes.js";
+import { colaboradoresRoutes } from "../modules/colaboradores/colaboradores.routes.js";
+import { fotosRoutes } from "../modules/fotos/fotos.routes.js";
+import { pessoasRoutes } from "../modules/pessoas/pessoas.routes.js";
+import { vendasRoutes } from "../modules/vendas/vendas.routes.js";
+import { webhooksRoutes } from "../modules/webhooks/webhooks.routes.js";
+import { uploadsRoutes } from "../modules/uploads/uploads.routes.js";
+import { empresasRoutes } from "../modules/empresas/empresas.routes.js";
+import { publicRoutes } from "../modules/public/public.routes.js";
+import { meRoutes } from "../modules/me/me.routes.js";
+
+export const routes = Router();
+
+routes.get("/health", (_req, res) => res.json({ ok: true }));
+routes.use("/webhooks", webhooksRoutes);
+routes.use("/public", publicRoutes);
+routes.use("/me", meRoutes);
+
+routes.use("/admin/dashboard", authMiddleware, requireRoles("ADMIN", "STAFF"), dashboardRoutes);
+routes.use("/admin/eventos", authMiddleware, requireRoles("ADMIN", "STAFF"), eventosRoutes);
+routes.use("/admin/ingressos", authMiddleware, requireRoles("ADMIN", "STAFF"), ingressosRoutes);
+routes.use("/admin/inscricoes", authMiddleware, requireRoles("ADMIN", "STAFF"), inscricoesRoutes);
+routes.use("/admin/customers", authMiddleware, requireRoles("ADMIN", "STAFF"), customersRoutes);
+routes.use("/admin/pagamentos", authMiddleware, requireRoles("ADMIN", "STAFF"), pagamentosRoutes);
+routes.use("/admin/pedidos", authMiddleware, requireRoles("ADMIN", "STAFF"), pedidosRoutes);
+routes.use("/admin/cortesias", authMiddleware, requireRoles("ADMIN", "STAFF"), cortesiasRoutes);
+routes.use("/admin/scanner", authMiddleware, requireRoles("ADMIN", "STAFF", "CHECKIN"), scannerRoutes);
+routes.use("/admin/relatorios", authMiddleware, requireRoles("ADMIN", "STAFF"), relatoriosRoutes);
+routes.use("/admin/colaboradores", authMiddleware, requireRoles("ADMIN"), colaboradoresRoutes);
+routes.use("/admin/fotos", authMiddleware, requireRoles("ADMIN", "STAFF"), fotosRoutes);
+routes.use("/admin/empresas", authMiddleware, requireRoles("ADMIN", "STAFF"), empresasRoutes);
+routes.use("/admin/pessoas", authMiddleware, requireRoles("ADMIN", "STAFF"), pessoasRoutes);
+routes.use("/admin/vendas", authMiddleware, requireRoles("ADMIN", "STAFF"), vendasRoutes);
+routes.use("/uploads", authMiddleware, requireRoles("ADMIN", "STAFF"), uploadsRoutes);

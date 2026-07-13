@@ -1,0 +1,552 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
+}
+
+model Customer {
+  id          Int          @id @default(autoincrement())
+  nome        String
+  cpf         String       @unique
+  telefone    String
+  email       String?
+  endereco    String?
+  cidade      String?
+  createdAt   DateTime     @default(now()) @db.Timestamp(6)
+  updatedAt   DateTime     @default(now()) @db.Timestamp(6)
+  ingresso    Ingresso[]
+  inscricao   Inscricao[]
+  pagamento   Pagamento[]
+  colaborador Colaborador?
+  pedidos     Pedido[]
+  userId      String?      @unique
+  user        User?        @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  @@index([cpf], map: "idx_customer_cpf")
+  @@index([telefone], map: "idx_customer_telefone")
+  @@map("customer")
+}
+
+model Evento {
+  id                   Int          @id @default(autoincrement())
+  nome                 String
+  tipo                 TipoEvento
+  local                String
+  cidade               String?
+  data                 DateTime     @db.Timestamp(6)
+  preco                Float
+  capacidade           Int?
+  qrcode               String       @unique
+  status               EventoStatus @default(ATIVO)
+  createdAt            DateTime     @default(now()) @db.Timestamp(6)
+  updatedAt            DateTime     @default(now()) @db.Timestamp(6)
+  banner               String?
+  observacao           String?
+  atracao              String?
+  dataLimiteInscricao  DateTime?    @db.Timestamp(6)
+  precoAntecipado      Float?
+  dataLimiteAntecipado DateTime?    @db.Timestamp(6)
+  cortesia             Cortesia[]
+  ingresso             Ingresso[]
+  inscricao            Inscricao[]
+  pagamento            Pagamento[]
+  pedidos              Pedido[]
+  pedidoItems          PedidoItem[]
+
+  @@index([cidade], map: "idx_evento_cidade")
+  @@index([data], map: "idx_evento_data")
+  @@index([status], map: "idx_evento_status")
+  @@index([tipo], map: "idx_evento_tipo")
+  @@map("evento")
+}
+
+model Ingresso {
+  id            Int          @id @default(autoincrement())
+  customerId    Int
+  eventoId      Int
+  preco         Float
+  qrcode        String       @unique
+  status        String       @default("PENDENTE")
+  createdAt     DateTime     @default(now()) @db.Timestamp(6)
+  updatedAt     DateTime     @default(now()) @db.Timestamp(6)
+  checkoutId    String?
+  paymentStatus String?
+  paidAt        DateTime?    @db.Timestamp(6)
+  validadoEm    DateTime?    @db.Timestamp(6)
+  validadoPorId Int?
+  orderId       Int?
+  customer      Customer     @relation(fields: [customerId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  evento        Evento       @relation(fields: [eventoId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  validadoPor   Colaborador? @relation(fields: [validadoPorId], references: [id], onDelete: SetNull)
+  order         Pedido?      @relation(fields: [orderId], references: [id], onDelete: SetNull)
+
+  @@index([customerId, eventoId])
+  @@index([orderId])
+  @@index([customerId], map: "idx_ingresso_customer")
+  @@index([eventoId], map: "idx_ingresso_evento")
+  @@index([validadoPorId])
+  @@map("ingresso")
+}
+
+model Inscricao {
+  id                            Int                 @id @default(autoincrement())
+  customerId                    Int
+  eventoId                      Int
+  nomePar                       String?
+  observacao                    String?
+  status                        InscricaoStatus     @default(CONFIRMADA)
+  createdAt                     DateTime            @default(now()) @db.Timestamp(6)
+  updatedAt                     DateTime            @default(now()) @db.Timestamp(6)
+  padrinho                      String?
+  madrinha                      String?
+  quantidadeParticipantes       Int                 @default(1)
+  quantidadePadrinhosEsperada   Int                 @default(2)
+  quantidadePadrinhosCadastrada Int                 @default(0)
+  padrinhosStatus               PadrinhosStatus     @default(PENDENTE)
+  padrinhos                     Json?
+  customer                      Customer            @relation(fields: [customerId], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  evento                        Evento              @relation(fields: [eventoId], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  pagamento                     Pagamento?
+  lotesIngressos                LoteIngressoAluno[]
+  orderId                       Int?
+  order                         Pedido?             @relation(fields: [orderId], references: [id], onDelete: SetNull)
+
+  @@unique([customerId, eventoId], map: "inscricao_customer_evento_unique")
+  @@index([customerId], map: "idx_inscricao_customer")
+  @@index([eventoId], map: "idx_inscricao_evento")
+  @@index([orderId])
+  @@map("inscricao")
+}
+
+model Pagamento {
+  id           Int             @id @default(autoincrement())
+  inscricaoId  Int?            @unique
+  customerId   Int
+  eventoId     Int
+  nomeCustomer String
+  cpfCustomer  String
+  valor        Float
+  status       PagamentoStatus @default(PENDENTE)
+  gatewayId    String?         @unique
+  checkoutUrl  String?
+  rawWebhook   String?
+  paidAt       DateTime?       @db.Timestamp(6)
+  createdAt    DateTime        @default(now()) @db.Timestamp(6)
+  updatedAt    DateTime        @default(now()) @db.Timestamp(6)
+  customer     Customer        @relation(fields: [customerId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  evento       Evento          @relation(fields: [eventoId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  inscricao    Inscricao?      @relation(fields: [inscricaoId], references: [id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@index([customerId], map: "idx_pagamento_customer")
+  @@index([eventoId], map: "idx_pagamento_evento")
+  @@index([gatewayId], map: "idx_pagamento_gateway")
+  @@index([status], map: "idx_pagamento_status")
+  @@map("pagamento")
+}
+
+model Cortesia {
+  id        Int       @id @default(autoincrement())
+  nome      String
+  cpf       String?
+  telefone  String?
+  eventoid  Int?
+  createdAt DateTime? @default(now()) @db.Timestamp(6)
+  updatedAt DateTime? @default(now()) @db.Timestamp(6)
+  evento    Evento?   @relation(fields: [eventoid], references: [id], onDelete: NoAction, onUpdate: NoAction)
+
+  @@map("cortesia")
+}
+
+model N8nChatHistory {
+  id        Int    @id @default(autoincrement())
+  sessionId String @map("session_id") @db.VarChar(255)
+  message   Json
+
+  @@map("n8n_chat_histories")
+}
+
+model RegrasAgentes {
+  id           Int       @id @default(autoincrement())
+  tipo         String    @default("GERAL")
+  prioridade   Int       @default(5)
+  texto_regra  String
+  ativo        Boolean   @default(true)
+  criado_por   String?
+  data_criacao DateTime? @default(now()) @db.Timestamptz(6)
+
+  @@unique([tipo, texto_regra], map: "uq_regra")
+  @@index([ativo], map: "idx_regras_ativo")
+  @@index([tipo], map: "idx_regras_tipo")
+  @@map("regras_agentes")
+}
+
+model User {
+  id                 String       @id @default(cuid())
+  name               String
+  email              String       @unique
+  emailVerified      Boolean      @default(false)
+  image              String?
+  role               UserRole     @default(STAFF)
+  mustChangePassword Boolean      @default(false)
+  phone              String?
+  createdAt          DateTime     @default(now()) @db.Timestamp(6)
+  updatedAt          DateTime     @updatedAt @db.Timestamp(6)
+  sessions           Session[]
+  accounts           Account[]
+  colaborador        Colaborador?
+  customer           Customer?
+  pedidos            Pedido[]
+
+  @@map("user")
+}
+
+model Session {
+  id        String   @id @default(cuid())
+  userId    String
+  token     String   @unique
+  expiresAt DateTime @db.Timestamp(6)
+  ipAddress String?
+  userAgent String?
+  createdAt DateTime @default(now()) @db.Timestamp(6)
+  updatedAt DateTime @updatedAt @db.Timestamp(6)
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@map("session")
+}
+
+model Account {
+  id                    String    @id @default(cuid())
+  userId                String
+  accountId             String
+  providerId            String
+  accessToken           String?
+  refreshToken          String?
+  accessTokenExpiresAt  DateTime? @db.Timestamp(6)
+  refreshTokenExpiresAt DateTime? @db.Timestamp(6)
+  scope                 String?
+  idToken               String?
+  password              String?
+  createdAt             DateTime  @default(now()) @db.Timestamp(6)
+  updatedAt             DateTime  @updatedAt @db.Timestamp(6)
+  user                  User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@map("account")
+}
+
+model Verification {
+  id         String    @id @default(cuid())
+  identifier String
+  value      String
+  expiresAt  DateTime  @db.Timestamp(6)
+  createdAt  DateTime? @default(now()) @db.Timestamp(6)
+  updatedAt  DateTime? @updatedAt @db.Timestamp(6)
+
+  @@map("verification")
+}
+
+model Colaborador {
+  id         Int        @id @default(autoincrement())
+  nome       String
+  cpf        String     @unique
+  email      String     @unique
+  role       UserRole   @default(STAFF)
+  status     String     @default("ATIVO")
+  userId     String     @unique
+  customerId Int?       @unique
+  createdAt  DateTime   @default(now()) @db.Timestamp(6)
+  updatedAt  DateTime   @updatedAt @db.Timestamp(6)
+  user       User       @relation(fields: [userId], references: [id], onDelete: Restrict)
+  customer   Customer?  @relation(fields: [customerId], references: [id], onDelete: SetNull, onUpdate: NoAction)
+  auditLogs  AuditLog[]
+  validacoes Ingresso[]
+
+  @@index([role])
+  @@index([status])
+  @@map("colaborador")
+}
+
+model AuditLog {
+  id            Int          @id @default(autoincrement())
+  action        String
+  entity        String
+  entityId      String?
+  metadata      Json?
+  colaboradorId Int?
+  createdAt     DateTime     @default(now()) @db.Timestamp(6)
+  colaborador   Colaborador? @relation(fields: [colaboradorId], references: [id], onDelete: SetNull)
+
+  @@index([colaboradorId])
+  @@index([entity, entityId])
+  @@map("audit_log")
+}
+
+model LoteIngressoAluno {
+  id                 Int                    @id @default(autoincrement())
+  inscricaoId        Int                    @unique
+  customerId         Int
+  eventoId           Int
+  quantidade         Int
+  valorUnitario      Float                  @default(0)
+  valorTotal         Float                  @default(0)
+  status             LoteIngressoStatus     @default(PENDENTE)
+  paymentStatus      PagamentoLoteStatus    @default(PENDENTE)
+  paymentUrl         String?
+  boletoUrl          String?
+  pixQrCode          String?
+  gatewayId          String?
+  dueDate            DateTime?              @db.Timestamp(6)
+  notificationStatus String                 @default("PENDENTE")
+  createdById        Int?
+  notes              String?
+  createdAt          DateTime               @default(now()) @db.Timestamp(6)
+  updatedAt          DateTime               @updatedAt @db.Timestamp(6)
+  inscricao          Inscricao              @relation(fields: [inscricaoId], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  tickets            IngressoAluno[]
+  historico          HistoricoPagamento[]
+  comprovantes       ComprovantePagamento[]
+
+  @@index([customerId], map: "idx_lote_ingresso_customer")
+  @@index([eventoId], map: "idx_lote_ingresso_evento")
+  @@index([status], map: "idx_lote_ingresso_status")
+  @@index([paymentStatus], map: "idx_lote_ingresso_payment_status")
+  @@map("lote_ingresso_aluno")
+}
+
+model IngressoAluno {
+  id                  Int                 @id @default(autoincrement())
+  loteId              Int
+  inscricaoId         Int
+  customerId          Int
+  eventoId            Int
+  codigo              String              @unique
+  qrcode              String              @unique
+  status              IngressoAlunoStatus @default(PENDENTE)
+  tipo                IngressoAlunoTipo   @default(NORMAL)
+  valor               Float               @default(0)
+  issuedAt            DateTime            @default(now()) @db.Timestamp(6)
+  dueDate             DateTime?           @db.Timestamp(6)
+  alunoNome           String
+  cursoNome           String
+  cidade              String?
+  professor           String?
+  courtesyReason      String?
+  courtesyResponsible String?
+  courtesyDate        DateTime?           @db.Timestamp(6)
+  notes               String?
+  createdAt           DateTime            @default(now()) @db.Timestamp(6)
+  updatedAt           DateTime            @updatedAt @db.Timestamp(6)
+  lote                LoteIngressoAluno   @relation(fields: [loteId], references: [id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@index([loteId], map: "idx_ingresso_aluno_lote")
+  @@index([inscricaoId], map: "idx_ingresso_aluno_inscricao")
+  @@index([customerId], map: "idx_ingresso_aluno_customer")
+  @@index([eventoId], map: "idx_ingresso_aluno_evento")
+  @@index([status], map: "idx_ingresso_aluno_status")
+  @@index([tipo], map: "idx_ingresso_aluno_tipo")
+  @@map("ingresso_aluno")
+}
+
+model HistoricoPagamento {
+  id            Int               @id @default(autoincrement())
+  loteId        Int
+  action        String
+  fromStatus    String?
+  toStatus      String?
+  reason        String?
+  metadata      Json?
+  colaboradorId Int?
+  createdAt     DateTime          @default(now()) @db.Timestamp(6)
+  lote          LoteIngressoAluno @relation(fields: [loteId], references: [id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@index([loteId], map: "idx_historico_pagamento_lote")
+  @@index([colaboradorId], map: "idx_historico_pagamento_colaborador")
+  @@map("historico_pagamento")
+}
+
+model ComprovantePagamento {
+  id           Int               @id @default(autoincrement())
+  loteId       Int
+  originalName String
+  url          String
+  secureUrl    String
+  format       String?
+  bytes        Int?
+  uploadedById Int?
+  createdAt    DateTime          @default(now()) @db.Timestamp(6)
+  lote         LoteIngressoAluno @relation(fields: [loteId], references: [id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@index([loteId], map: "idx_comprovante_pagamento_lote")
+  @@index([uploadedById], map: "idx_comprovante_pagamento_user")
+  @@map("comprovante_pagamento")
+}
+
+model Foto {
+  id           String   @id @default(cuid())
+  originalName String
+  publicId     String   @unique
+  url          String
+  secureUrl    String
+  format       String?
+  bytes        Int?
+  width        Int?
+  height       Int?
+  folder       String?
+  uploadedById String?
+  createdAt    DateTime @default(now()) @db.Timestamp(6)
+  updatedAt    DateTime @updatedAt @db.Timestamp(6)
+
+  @@index([folder], map: "idx_foto_folder")
+  @@index([createdAt], map: "idx_foto_created_at")
+  @@index([uploadedById], map: "idx_foto_uploaded_by")
+  @@map("foto")
+}
+
+model Empresa {
+  id             String   @id @default(cuid())
+  nome           String
+  imagemUrl      String
+  imagemPublicId String   @unique
+  ativo          Boolean  @default(true)
+  publicado      Boolean  @default(true)
+  ordem          Int      @default(0)
+  createdAt      DateTime @default(now()) @db.Timestamp(6)
+  updatedAt      DateTime @updatedAt @db.Timestamp(6)
+
+  @@index([ativo], map: "idx_empresa_ativo")
+  @@index([publicado], map: "idx_empresa_publicado")
+  @@index([ordem], map: "idx_empresa_ordem")
+  @@map("empresa")
+}
+
+model Pedido {
+  id                  Int          @id @default(autoincrement())
+  code                String       @unique
+  type                PedidoType
+  customerId          Int
+  eventId             Int?
+  userId              String?
+  status              String       @default("PENDENTE")
+  paymentStatus       String?      @default("PENDENTE")
+  paymentMethod       String?
+  total               Float        @default(0)
+  isCourtesy          Boolean      @default(false)
+  courtesyReason      String?
+  courtesyResponsible String?
+  notes               String?
+  createdAt           DateTime     @default(now()) @db.Timestamp(6)
+  updatedAt           DateTime     @updatedAt @db.Timestamp(6)
+  customer            Customer     @relation(fields: [customerId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  evento              Evento?      @relation(fields: [eventId], references: [id], onDelete: SetNull, onUpdate: NoAction)
+  user                User?        @relation(fields: [userId], references: [id], onDelete: SetNull)
+  items               PedidoItem[]
+  ingressos           Ingresso[]
+  inscricoes          Inscricao[]
+
+  @@index([type], map: "idx_pedido_type")
+  @@index([status], map: "idx_pedido_status")
+  @@index([paymentStatus], map: "idx_pedido_payment_status")
+  @@index([customerId], map: "idx_pedido_customer")
+  @@index([eventId], map: "idx_pedido_event")
+  @@index([userId])
+  @@index([createdAt], map: "idx_pedido_created_at")
+  @@map("pedido")
+}
+
+model PedidoItem {
+  id          Int      @id @default(autoincrement())
+  orderId     Int
+  productId   Int?
+  ticketLotId Int?
+  eventId     Int?
+  description String
+  quantity    Int
+  unitPrice   Float
+  total       Float
+  createdAt   DateTime @default(now()) @db.Timestamp(6)
+  updatedAt   DateTime @updatedAt @db.Timestamp(6)
+  order       Pedido   @relation(fields: [orderId], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  evento      Evento?  @relation(fields: [eventId], references: [id], onDelete: SetNull, onUpdate: NoAction)
+
+  @@index([orderId], map: "idx_pedido_item_order")
+  @@index([productId], map: "idx_pedido_item_product")
+  @@index([ticketLotId], map: "idx_pedido_item_ticket_lot")
+  @@index([eventId])
+  @@map("pedido_item")
+}
+
+enum EventoStatus {
+  ATIVO
+  INATIVO
+  CANCELADO
+  ENCERRADO
+}
+
+enum InscricaoStatus {
+  PENDENTE
+  CONFIRMADA
+  CANCELADA
+}
+
+enum PagamentoStatus {
+  PENDENTE
+  PAGO
+  FALHOU
+  ESTORNADO
+}
+
+enum TipoEvento {
+  BAILE
+  CURSO
+  EVENTO
+}
+
+enum UserRole {
+  ADMIN
+  STAFF
+  CHECKIN
+  CUSTOMER
+}
+
+enum PedidoType {
+  STORE
+  EVENT
+}
+
+enum PadrinhosStatus {
+  PENDENTE
+  COMPLETO
+}
+
+enum LoteIngressoStatus {
+  PENDENTE
+  PAGO
+  CANCELADO
+  EXPIRADO
+}
+
+enum PagamentoLoteStatus {
+  PENDENTE
+  PAGO
+  CANCELADO
+  EXPIRADO
+}
+
+enum IngressoAlunoStatus {
+  PENDENTE
+  PAGO
+  CANCELADO
+  EXPIRADO
+  CORTESIA
+  UTILIZADO
+}
+
+enum IngressoAlunoTipo {
+  NORMAL
+  CORTESIA
+}
