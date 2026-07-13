@@ -1,7 +1,7 @@
 import cookieParser from "cookie-parser";
 import cors from "cors";
 import express from "express";
-import * as helmet from "helmet";
+import helmet from "helmet";
 import swaggerUi from "swagger-ui-express";
 import { toNodeHandler } from "better-auth/node";
 import { env, isTrustedDevOrigin, trustedOrigins } from "./env.js";
@@ -26,7 +26,7 @@ export function createApp() {
     })
   );
 
-  app.use(helmet.default());
+  app.use(helmet());
   app.use("/api/auth/sign-up", (req, res, next) => {
     if (env.ALLOW_PUBLIC_SIGNUP || req.originalUrl.startsWith("/api/auth/sign-up/email")) return next();
     return res.status(403).json({ message: "Cadastro público desabilitado" });
