@@ -4,6 +4,7 @@ import express from "express";
 import helmet from "helmet";
 import swaggerUi from "swagger-ui-express";
 import { toNodeHandler } from "better-auth/node";
+import type {} from "./types/express.js";
 import { env, isTrustedDevOrigin, trustedOrigins } from "./env.js";
 import { auth } from "./lib/auth.js";
 import { errorMiddleware, notFoundMiddleware } from "./middlewares/error.middleware.js";
