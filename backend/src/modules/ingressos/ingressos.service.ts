@@ -327,30 +327,31 @@ export const ingressosService = {
     if (Number(lote.valorTotal) <= 0) throw new AppError("Lote sem valor para cobranca", 400);
 
     const descricao = `Lote ${lote.id} - ${lote.inscricao.evento.nome}`;
-    const pagamento = await pagamentosService.criarCobranca({
-      customerId: lote.customerId,
-      eventoId: lote.eventoId,
-      inscricaoId: lote.inscricaoId,
-      valor: Number(lote.valorTotal),
-      descricao,
-      metodos: ["PIX", "CARD"],
-      metadata: {
-        externalId: `lote-${lote.id}`,
-        loteId: lote.id,
-        inscricaoId: lote.inscricaoId,
-        tipo: "LOTE_INGRESSO"
-      },
-      itens: [{
-        externalId: `lote-${lote.id}`,
-        name: descricao,
-        description: `${lote.quantidade} ingressos`,
-        quantity: 1,
-        price: Math.round(Number(lote.valorTotal) * 100)
-      }]
-    });
-
+    let pedidoId = lote.pedidoId;
+    if (!pedidoId) {
+      const totalAmount = Math.round(Number(lote.valorTotal) * 100);
+      const unitAmount = Math.round(Number(lote.valorUnitario) * 100);
+      const pedido = await prisma.pedido.create({
+        data: {
+          code: `LOT-${randomUUID().replace(/-/g, "").slice(0, 12).toUpperCase()}`,
+          type: "EVENT",
+          customerId: lote.customerId,
+          eventId: lote.eventoId,
+          status: "PENDENTE",
+          paymentStatus: "PENDENTE",
+          paymentMethod: "STRIPE",
+          total: Number(lote.valorTotal),
+          totalAmount,
+          origin: "PAINEL_ADMIN",
+          notes: JSON.stringify({ source: "LOTE_INGRESSO", loteId: lote.id, inscricaoId: lote.inscricaoId }),
+          items: { create: [{ ticketLotId: lote.id, eventId: lote.eventoId, description: descricao, quantity: lote.quantidade, unitPrice: Number(lote.valorUnitario), total: Number(lote.valorTotal), unitAmount, totalAmount }] }
+        }
+      });
+      pedidoId = pedido.id;
+      await prisma.loteIngressoAluno.update({ where: { id }, data: { pedidoId } });
+    }
+    const pagamento = await pagamentosService.createCheckoutForOrder(pedidoId, "PAINEL_ADMIN", { admin: true });
     const checkoutUrl = pagamento.checkoutUrl;
-    if (!checkoutUrl) throw new AppError("AbacatePay nao retornou URL de pagamento", 502, pagamento);
 
     const metadata = tryParseJson(lote.notes);
     const updated = await prisma.loteIngressoAluno.update({
@@ -361,8 +362,8 @@ export const ingressosService = {
         status: "PENDENTE",
         notes: JSON.stringify({
           ...metadata,
-          pagamentoId: pagamento.id,
-          gatewayId: pagamento.gatewayId,
+          paymentId: pagamento.paymentId,
+          checkoutSessionId: pagamento.checkoutSessionId,
           checkoutUrl
         })
       },
@@ -371,7 +372,7 @@ export const ingressosService = {
 
     await history(id, "LINK_PAGAMENTO_GERADO", {
       colaboradorId,
-      metadata: { pagamentoId: pagamento.id, gatewayId: pagamento.gatewayId, checkoutUrl }
+      metadata: { paymentId: pagamento.paymentId, checkoutSessionId: pagamento.checkoutSessionId, checkoutUrl }
     });
 
     return {

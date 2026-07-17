@@ -6,7 +6,7 @@ import { eventosRoutes } from "../modules/eventos/eventos.routes.js";
 import { ingressosRoutes } from "../modules/ingressos/ingressos.routes.js";
 import { inscricoesRoutes } from "../modules/inscricoes/inscricoes.routes.js";
 import { customersRoutes } from "../modules/customers/customers.routes.js";
-import { pagamentosRoutes } from "../modules/pagamentos/pagamentos.routes.js";
+import { customerPaymentsRoutes, integrationsRoutes, pagamentosRoutes } from "../modules/pagamentos/pagamentos.routes.js";
 import { pedidosRoutes } from "../modules/pedidos/pedidos.routes.js";
 import { cortesiasRoutes } from "../modules/cortesias/cortesias.routes.js";
 import { scannerRoutes } from "../modules/scanner/scanner.routes.js";
@@ -15,20 +15,21 @@ import { colaboradoresRoutes } from "../modules/colaboradores/colaboradores.rout
 import { fotosRoutes } from "../modules/fotos/fotos.routes.js";
 import { pessoasRoutes } from "../modules/pessoas/pessoas.routes.js";
 import { vendasRoutes } from "../modules/vendas/vendas.routes.js";
-import { webhooksRoutes } from "../modules/webhooks/webhooks.routes.js";
 import { uploadsRoutes } from "../modules/uploads/uploads.routes.js";
 import { empresasRoutes } from "../modules/empresas/empresas.routes.js";
 import { publicRoutes } from "../modules/public/public.routes.js";
 import { meRoutes } from "../modules/me/me.routes.js";
 import { customerAuthRoutes } from "../modules/customer-auth/customer-auth.routes.js";
+import { env } from "../env.js";
 
 export const routes = Router();
 
-routes.get("/health", (_req, res) => res.json({ ok: true }));
-routes.use("/webhooks", webhooksRoutes);
+routes.get("/health", (_req, res) => res.json({ status: "ok", stripeConfigured: Boolean(env.STRIPE_SECRET_KEY && env.STRIPE_WEBHOOK_SECRET) }));
 routes.use("/public", publicRoutes);
 routes.use("/customer-auth", customerAuthRoutes);
 routes.use("/me", meRoutes);
+routes.use("/payments", customerPaymentsRoutes);
+routes.use("/integrations", integrationsRoutes);
 
 routes.use("/admin/dashboard", authMiddleware, requireRoles("ADMIN", "STAFF"), dashboardRoutes);
 routes.use("/admin/eventos", authMiddleware, requireRoles("ADMIN", "STAFF"), eventosRoutes);

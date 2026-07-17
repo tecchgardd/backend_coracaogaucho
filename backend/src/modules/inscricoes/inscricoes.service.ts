@@ -131,7 +131,7 @@ export const inscricoesService = {
       prisma.inscricao.findMany({
         where,
         ...getPagination(query),
-        include: { evento: true, customer: true, pagamento: true },
+        include: { evento: true, customer: true, pagamentos: true },
         orderBy: { createdAt: "desc" }
       }),
       prisma.inscricao.count({ where })
@@ -142,7 +142,7 @@ export const inscricoesService = {
   async buscar(id: number) {
     const inscricao = await prisma.inscricao.findUnique({
       where: { id },
-      include: { evento: true, customer: true, pagamento: true }
+      include: { evento: true, customer: true, pagamentos: true }
     });
     if (!inscricao) throw new AppError("Inscrição não encontrada", 404);
     return inscricao;
@@ -151,7 +151,7 @@ export const inscricoesService = {
   async criar(data: z.infer<typeof inscricaoCreateSchema>) {
     return prisma.inscricao.create({
       data: await mapInscricaoCreateData(data),
-      include: { evento: true, customer: true, pagamento: true }
+      include: { evento: true, customer: true, pagamentos: true }
     });
   },
 
@@ -160,7 +160,7 @@ export const inscricoesService = {
     return prisma.inscricao.update({
       where: { id },
       data: await mapInscricaoUpdateData(data),
-      include: { evento: true, customer: true, pagamento: true }
+      include: { evento: true, customer: true, pagamentos: true }
     });
   },
 

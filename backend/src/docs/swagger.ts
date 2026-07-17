@@ -14,12 +14,20 @@ export const swaggerSpec = swaggerJSDoc({
           type: "apiKey",
           in: "cookie",
           name: "cg-admin.session_token"
+        },
+        integrationSecret: {
+          type: "apiKey",
+          in: "header",
+          name: "x-integration-secret"
         }
       }
     },
     security: [{ cookieAuth: [] }]
     ,
     paths: {
+      "/health": {
+        get: { tags: ["Infraestrutura"], security: [], summary: "Verifica a API sem expor credenciais", responses: { "200": { description: "API operacional e indicador booleano da configuracao Stripe" } } }
+      },
       "/auth/{path}": {
         post: {
           tags: ["Auth"],
@@ -251,19 +259,38 @@ export const swaggerSpec = swaggerJSDoc({
           responses: { "200": { description: "Ingressos validados" } }
         }
       },
-      "/webhooks/abacatepay": {
+      "/payments/checkout": {
         post: {
-          tags: ["Webhooks"],
-          summary: "Recebe eventos da AbacatePay",
-          parameters: [
-            { name: "webhookSecret", in: "query", required: false, schema: { type: "string" } }
-          ],
+          tags: ["Pagamentos"],
+          summary: "Cria uma Stripe Checkout Session com valores recalculados no banco",
           requestBody: {
             required: true,
-            content: { "application/json": { schema: { type: "object", additionalProperties: true } } }
+            content: { "application/json": { schema: { type: "object", properties: { orderId: { type: "integer" }, eventId: { type: "integer" }, quantity: { type: "integer", minimum: 1, maximum: 10 }, items: { type: "array", items: { type: "object", required: ["eventId", "quantity"], properties: { eventId: { type: "integer" }, quantity: { type: "integer", minimum: 1, maximum: 10 } } } }, origin: { type: "string", enum: ["SITE"], default: "SITE" } } } } }
           },
-          responses: { "200": { description: "Webhook recebido" }, "401": { description: "Secret inválido" } }
+          responses: { "201": { description: "Checkout criado" }, "401": { description: "Cliente não autenticado" }, "409": { description: "Evento, capacidade ou pedido indisponível" }, "429": { description: "Limite de tentativas excedido" } }
         }
+      },
+      "/payments/{orderId}/retry": {
+        post: { tags: ["Pagamentos"], summary: "Revalida o pedido e cria uma nova tentativa Stripe", parameters: [{ name: "orderId", in: "path", required: true, schema: { type: "integer" } }], responses: { "201": { description: "Nova Checkout Session criada" }, "404": { description: "Pedido inexistente ou de outro cliente" }, "409": { description: "Pedido já pago ou reserva indisponível" } } }
+      },
+      "/payments/{orderId}/status": {
+        get: { tags: ["Pagamentos"], summary: "Consulta somente o status interno do pedido", parameters: [{ name: "orderId", in: "path", required: true, schema: { type: "integer" } }], responses: { "200": { description: "Status interno" }, "404": { description: "Pedido inexistente ou de outro cliente" } } }
+      },
+      "/admin/pagamentos/{id}/cancelar": {
+        patch: { tags: ["Pagamentos"], summary: "Cancela apenas pagamento ainda não confirmado", parameters: [{ name: "id", in: "path", required: true, schema: { type: "integer" } }], requestBody: { content: { "application/json": { schema: { type: "object", properties: { reason: { type: "string" } } } } } }, responses: { "200": { description: "Pagamento cancelado" }, "409": { description: "Pagamento confirmado deve ser reembolsado" } } }
+      },
+      "/admin/pagamentos/{id}/reembolsar": {
+        post: { tags: ["Pagamentos"], summary: "Solicita reembolso Stripe total ou parcial (somente ADMIN)", parameters: [{ name: "id", in: "path", required: true, schema: { type: "integer" } }], requestBody: { required: true, content: { "application/json": { schema: { type: "object", required: ["reason"], properties: { amount: { type: "integer", description: "Valor em centavos; omita para reembolso total restante" }, reason: { type: "string" }, stripeReason: { type: "string", enum: ["duplicate", "fraudulent", "requested_by_customer"] } } } } } }, responses: { "201": { description: "Reembolso solicitado" }, "403": { description: "Somente ADMIN" }, "409": { description: "Pagamento não reembolsável" }, "422": { description: "Valor inválido" } } }
+      },
+      "/integrations/whatsapp/checkout": {
+        post: {
+          tags: ["Integrações"], security: [{ integrationSecret: [] }], summary: "Cria checkout do WhatsApp/n8n com preço calculado no banco",
+          requestBody: { required: true, content: { "application/json": { schema: { type: "object", required: ["eventId", "quantity", "customer"], properties: { eventId: { type: "integer" }, quantity: { type: "integer", minimum: 1, maximum: 10 }, origin: { type: "string", enum: ["WHATSAPP"] }, customer: { type: "object", required: ["name", "email", "cpf", "phone"], properties: { name: { type: "string" }, email: { type: "string", format: "email" }, cpf: { type: "string", example: "00000000000" }, phone: { type: "string", example: "48999999999" } } } } } } } },
+          responses: { "201": { description: "Checkout criado" }, "401": { description: "Segredo ausente ou inválido" }, "409": { description: "Evento ou capacidade indisponível" } }
+        }
+      },
+      "/stripe/webhook": {
+        post: { tags: ["Webhooks"], security: [], summary: "Chamado somente pela Stripe; usa corpo bruto e stripe-signature, nunca pelo frontend", parameters: [{ name: "stripe-signature", in: "header", required: true, schema: { type: "string" } }], responses: { "200": { description: "Evento processado, ignorado ou duplicado" }, "400": { description: "Assinatura ausente ou inválida" } } }
       },
       "/uploads/image": {
         post: {

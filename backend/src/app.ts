@@ -10,6 +10,8 @@ import { auth } from "./lib/auth.js";
 import { errorMiddleware, notFoundMiddleware } from "./middlewares/error.middleware.js";
 import { routes } from "./routes/index.js";
 import { swaggerSpec } from "./docs/swagger.js";
+import { webhooksController } from "./modules/webhooks/webhooks.controller.js";
+import { asyncHandler } from "./utils/http.js";
 
 export function createApp() {
   const app = express();
@@ -28,14 +30,16 @@ export function createApp() {
   );
 
   app.use(helmet());
+  app.get("/health", (_req, res) => res.json({ status: "ok", stripeConfigured: Boolean(env.STRIPE_SECRET_KEY && env.STRIPE_WEBHOOK_SECRET) }));
   app.get("/", (_req, res) => {
-    res.json({ name: "Coração Gaúcho API", status: "ok", health: "/api/health" });
+    res.json({ name: "Coração Gaúcho API", status: "ok", health: "/health" });
   });
   app.use("/api/auth/sign-up", (req, res, next) => {
     if (env.ALLOW_PUBLIC_SIGNUP || req.originalUrl.startsWith("/api/auth/sign-up/email")) return next();
     return res.status(403).json({ message: "Cadastro público desabilitado" });
   });
   app.all("/api/auth/*", toNodeHandler(auth));
+  app.post("/api/stripe/webhook", express.raw({ type: "application/json", limit: "1mb" }), asyncHandler(webhooksController.stripe));
   app.use(express.json({ limit: "10mb" }));
   app.use(express.urlencoded({ extended: true }));
   app.use(cookieParser());

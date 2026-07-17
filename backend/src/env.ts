@@ -13,9 +13,12 @@ const envSchema = z.object({
   GOOGLE_CLIENT_ID: z.string().optional(),
   GOOGLE_CLIENT_SECRET: z.string().optional(),
   PRODUCTION_ORIGIN: z.string().optional(),
-  ABACATEPAY_API_URL: z.string().url().default("https://api.abacatepay.com/v1"),
-  ABACATEPAY_API_KEY: z.string().optional(),
-  ABACATEPAY_WEBHOOK_SECRET: z.string().optional(),
+  STRIPE_SECRET_KEY: z.string().min(1),
+  STRIPE_WEBHOOK_SECRET: z.string().min(1),
+  STRIPE_CURRENCY: z.literal("brl").default("brl"),
+  FRONTEND_URL: z.string().url(),
+  BACKEND_URL: z.string().url(),
+  N8N_INTEGRATION_SECRET: z.string().min(1),
   CLOUDINARY_CLOUD_NAME: z.string().optional(),
   CLOUDINARY_API_KEY: z.string().optional(),
   CLOUDINARY_API_SECRET: z.string().optional(),
@@ -27,6 +30,7 @@ export const googleAuthEnabled = Boolean(env.GOOGLE_CLIENT_ID && env.GOOGLE_CLIE
 
 export const trustedOrigins = [
   ...env.AUTH_TRUSTED_ORIGINS.split(",").map((origin) => origin.trim()).filter(Boolean),
+  env.FRONTEND_URL,
   env.PRODUCTION_ORIGIN,
   ...(env.NODE_ENV === "production"
     ? []

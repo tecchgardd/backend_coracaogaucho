@@ -2,7 +2,7 @@ import { z } from "zod";
 
 const digits = (value: string) => value.replace(/\D/g, "");
 
-function isValidCpf(value: string) {
+export function isValidCpf(value: string) {
   if (!/^\d{11}$/.test(value) || /^(\d)\1{10}$/.test(value)) return false;
   const calculateDigit = (length: number) => {
     const sum = value.slice(0, length).split("").reduce((total, digit, index) => total + Number(digit) * (length + 1 - index), 0);

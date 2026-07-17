@@ -1,18 +1,54 @@
 import { z } from "zod";
 import { paginationQuerySchema } from "../common/schemas.js";
+import { isValidCpf } from "../customer-auth/customer-auth.schemas.js";
 
 export const pagamentoQuerySchema = paginationQuerySchema.extend({
-  status: z.enum(["PENDENTE", "PAGO", "FALHOU", "ESTORNADO"]).optional(),
+  status: z.enum(["PENDENTE", "PROCESSANDO", "PAGO", "FALHOU", "CANCELADO", "EXPIRADO", "ESTORNADO", "PARCIALMENTE_ESTORNADO", "CONTESTADO", "CONTESTACAO_PERDIDA"]).optional(),
   customerId: z.coerce.number().int().positive().optional()
 });
 
-export const criarCobrancaSchema = z.object({
-  customerId: z.coerce.number().int().positive(),
-  eventoId: z.coerce.number().int().positive(),
-  inscricaoId: z.coerce.number().int().positive().optional(),
-  valor: z.number().positive(),
-  descricao: z.string().optional(),
-  itens: z.array(z.record(z.string(), z.unknown())).default([]),
-  metodos: z.array(z.enum(["PIX", "CARD"])).default(["PIX", "CARD"]),
-  metadata: z.record(z.string(), z.unknown()).default({})
+const cartItemSchema = z.object({
+  eventId: z.coerce.number().int().positive(),
+  quantity: z.coerce.number().int().min(1).max(10)
+});
+
+export const checkoutSchema = z.object({
+  orderId: z.coerce.number().int().positive().optional(),
+  eventId: z.coerce.number().int().positive().optional(),
+  quantity: z.coerce.number().int().min(1).max(10).optional(),
+  items: z.array(cartItemSchema).min(1).max(20).optional(),
+  origin: z.literal("SITE").default("SITE")
+}).superRefine((data, ctx) => {
+  if (!data.orderId && !data.items?.length && !data.eventId) {
+    ctx.addIssue({ code: "custom", message: "Informe orderId, eventId ou items" });
+  }
+  if (data.eventId && !data.quantity) {
+    ctx.addIssue({ code: "custom", path: ["quantity"], message: "quantity e obrigatorio com eventId" });
+  }
+});
+
+export const orderParamSchema = z.object({ orderId: z.coerce.number().int().positive() });
+
+export const cancelPaymentSchema = z.object({
+  reason: z.string().trim().min(3).max(300).default("Cancelamento administrativo")
+});
+
+export const refundPaymentSchema = z.object({
+  amount: z.coerce.number().int().positive().optional(),
+  reason: z.string().trim().min(3).max(300),
+  stripeReason: z.enum(["duplicate", "fraudulent", "requested_by_customer"]).default("requested_by_customer")
+});
+
+export const integrationCustomerSchema = z.object({
+  name: z.string().trim().min(5).max(150).refine((value) => value.split(/\s+/).length >= 2, "Informe nome e sobrenome"),
+  email: z.string().trim().email().max(255),
+  cpf: z.string().transform((value) => value.replace(/\D/g, "")).refine(isValidCpf, "CPF invalido"),
+  phone: z.string().transform((value) => value.replace(/\D/g, "")).pipe(z.string().min(10).max(13))
+});
+
+export const whatsappCheckoutSchema = z.object({
+  eventId: z.coerce.number().int().positive(),
+  quantity: z.coerce.number().int().min(1).max(10),
+  customer: integrationCustomerSchema,
+  origin: z.literal("WHATSAPP").default("WHATSAPP")
 });

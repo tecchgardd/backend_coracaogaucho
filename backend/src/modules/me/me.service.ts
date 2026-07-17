@@ -59,7 +59,7 @@ export const meService = {
   async updateProfile(session: CustomerSession, data: z.infer<typeof profileUpdateSchema>) {
     const conflicting = await prisma.customer.findUnique({ where: { cpf: data.cpf } });
     if (conflicting?.userId && conflicting.userId !== session.userId) throw new AppError("CPF ja vinculado a outra conta", 409);
-    const customer = await prisma.$transaction(async (tx) => {
+    await prisma.$transaction(async (tx) => {
       await tx.user.update({ where: { id: session.userId }, data: { name: data.name, phone: data.phone } });
       if (session.customerId) {
         return tx.customer.update({ where: { id: session.customerId }, data: { nome: data.name, cpf: data.cpf, telefone: data.phone, email: session.email, dataNascimento: data.birthDate, sexo: data.gender, cep: data.cep, endereco: data.address, numero: data.number, complemento: data.complement, bairro: data.neighborhood, estado: data.state, cidade: data.city } });
@@ -134,7 +134,8 @@ export const meService = {
         const eventId = Number(item.eventId);
         const current = await tx.evento.findUnique({ where: { id: eventId } });
         if (!current || current.status !== "ATIVO" || current.data < new Date()) throw new AppError("Item ficou indisponivel", 409);
-        const reserved = await tx.pedidoItem.aggregate({ where: { eventId, order: { status: { notIn: ["CANCELADO", "EXPIRADO", "FALHOU"] }, paymentStatus: { in: ["PENDENTE", "PAGO"] } } }, _sum: { quantity: true } });
+        const now = new Date();
+        const reserved = await tx.pedidoItem.aggregate({ where: { eventId, order: { status: { notIn: ["CANCELADO", "EXPIRADO", "FALHOU"] }, OR: [{ paymentStatus: "PAGO" }, { paymentStatus: "PENDENTE", expiresAt: null }, { paymentStatus: "PENDENTE", expiresAt: { gt: now } }] } }, _sum: { quantity: true } });
         if (current.capacidade != null && (reserved._sum.quantity ?? 0) + Number(item.quantity) > current.capacidade) throw new AppError("Quantidade indisponivel", 409, { eventId });
       }
       const created = await tx.pedido.create({
@@ -146,10 +147,12 @@ export const meService = {
           eventId: eventIds.length === 1 ? eventIds[0] : null,
           status: free ? "PAGO" : "PENDENTE",
           paymentStatus: free ? "PAGO" : "PENDENTE",
-          paymentMethod: free ? "GRATUITO" : "ABACATEPAY",
+          paymentMethod: free ? "GRATUITO" : "STRIPE",
           total: validation.total,
+          totalAmount: Math.round(validation.total * 100),
+          origin: "SITE",
           notes: JSON.stringify({ source: "CUSTOMER_CHECKOUT", statusVenda: free ? "PAGO" : "PENDENTE" }),
-          items: { create: validation.validItems.map((item) => ({ eventId: Number(item.eventId), description: `${item.type} - ${item.name}`, quantity: Number(item.quantity), unitPrice: Number(item.unitPrice), total: Number(item.total) })) }
+          items: { create: validation.validItems.map((item) => ({ eventId: Number(item.eventId), description: `${item.type} - ${item.name}`, quantity: Number(item.quantity), unitPrice: Number(item.unitPrice), total: Number(item.total), unitAmount: Math.round(Number(item.unitPrice) * 100), totalAmount: Math.round(Number(item.total) * 100) })) }
         }
       });
       for (const item of validation.validItems) {
@@ -168,18 +171,9 @@ export const meService = {
 
     if (free) return { orderId: order.id, orderCode: order.code, status: "PAGO", free: true, total: 0, checkoutUrl: null };
     try {
-      const first = validation.validItems[0];
-      const payment = await pagamentosService.criarCobranca({
-        customerId: session.customerId,
-        eventoId: Number(first.eventId),
-        valor: validation.total,
-        descricao: `Pedido ${order.code} - Coracao Gaucho`,
-        metodos: ["PIX", "CARD"],
-        metadata: { externalId: order.code, pedidoId: order.id, tipo: "CUSTOMER_CHECKOUT" },
-        itens: order.items.map((item) => ({ externalId: `pedido-item-${item.id}`, name: item.description, description: item.description, quantity: item.quantity, price: Math.round(Number(item.unitPrice) * 100) }))
-      });
-      await prisma.pedido.update({ where: { id: order.id }, data: { notes: JSON.stringify({ source: "CUSTOMER_CHECKOUT", pagamentoId: payment.id, gatewayId: payment.gatewayId, checkoutUrl: payment.checkoutUrl }) } });
-      return { orderId: order.id, orderCode: order.code, status: "PENDENTE", free: false, total: validation.total, checkoutUrl: payment.checkoutUrl };
+      const payment = await pagamentosService.createCheckoutForOrder(order.id, "SITE", { customerId: session.customerId, userId: session.userId });
+      await prisma.pedido.update({ where: { id: order.id }, data: { notes: JSON.stringify({ source: "CUSTOMER_CHECKOUT", paymentId: payment.paymentId, checkoutSessionId: payment.checkoutSessionId, checkoutUrl: payment.checkoutUrl }) } });
+      return { ...payment, orderCode: order.code, free: false, total: validation.total };
     } catch (error) {
       await prisma.$transaction([
         prisma.pedido.update({ where: { id: order.id }, data: { status: "FALHOU", paymentStatus: "FALHOU" } }),
@@ -209,7 +203,7 @@ export const meService = {
 
   async enrollments(session: CustomerSession) {
     if (!session.customerId) return { data: [] };
-    const data = await prisma.inscricao.findMany({ where: { customerId: session.customerId, order: { userId: session.userId } }, include: { evento: true, pagamento: true }, orderBy: { createdAt: "desc" } });
+    const data = await prisma.inscricao.findMany({ where: { customerId: session.customerId, order: { userId: session.userId } }, include: { evento: true, pagamentos: true }, orderBy: { createdAt: "desc" } });
     return { data: data.map((enrollment) => ({ ...enrollment, statusLabel: statusLabel(enrollment.status) })) };
   }
 };

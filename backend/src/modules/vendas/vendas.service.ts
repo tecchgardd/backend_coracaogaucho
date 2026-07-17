@@ -165,10 +165,13 @@ export const vendasService = {
         items: {
           create: [{
             ticketLotId: undefined,
+            eventId,
             description: `${eventLabel(data.tipo)} - ${evento.nome}`,
             quantity: data.quantidade,
             unitPrice: data.valorUnitario,
-            total
+            total,
+            unitAmount: Math.round(data.valorUnitario * 100),
+            totalAmount: Math.round(total * 100)
           }]
         }
       },
@@ -223,43 +226,20 @@ export const vendasService = {
 
     const metadata = pedido.notes ? tryParseJson(pedido.notes) : {};
     const descricao = `${eventLabel(String(metadata.tipoVenda))} - ${pedido.evento?.nome ?? pedido.code}`;
-    const pagamento = await pagamentosService.criarCobranca({
-      customerId: pedido.customerId,
-      eventoId: pedido.eventId,
-      inscricaoId: metadata.inscricaoId ? Number(metadata.inscricaoId) : undefined,
-      valor: Number(pedido.total),
-      descricao,
-      metodos: ["PIX", "CARD"],
-      metadata: {
-        externalId: pedido.code,
-        pedidoId: pedido.id,
-        vendaCodigo: pedido.code,
-        tipo: "VENDA",
-        ...metadata
-      },
-      itens: pedido.items.map((item) => ({
-        externalId: `pedido-item-${item.id}`,
-        name: item.description,
-        description: item.description,
-        quantity: item.quantity,
-        price: Math.round(Number(item.unitPrice) * 100)
-      }))
-    });
-
+    const pagamento = await pagamentosService.createCheckoutForOrder(pedido.id, "PAINEL_ADMIN", { admin: true });
     const checkoutUrl = pagamento.checkoutUrl;
-    if (!checkoutUrl) throw new AppError("AbacatePay nao retornou URL de pagamento", 502, pagamento);
 
     const updated = await prisma.pedido.update({
       where: { id },
       data: {
-        paymentMethod: "ABACATEPAY",
+        paymentMethod: "STRIPE",
         paymentStatus: "PENDENTE",
         status: "PENDENTE",
         notes: JSON.stringify({
           ...metadata,
           statusVenda: "PENDENTE",
-          pagamentoId: pagamento.id,
-          gatewayId: pagamento.gatewayId,
+          paymentId: pagamento.paymentId,
+          checkoutSessionId: pagamento.checkoutSessionId,
           checkoutUrl
         })
       },

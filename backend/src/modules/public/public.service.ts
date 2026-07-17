@@ -1,10 +1,8 @@
-import { randomUUID } from "node:crypto";
 import type { Prisma } from "@prisma/client";
 import type { z } from "zod";
 import { cloudinary } from "../../lib/cloudinary.js";
 import { prisma } from "../../lib/prisma.js";
 import { AppError } from "../../utils/http.js";
-import { pagamentosService } from "../pagamentos/pagamentos.service.js";
 import type { publicAlbumPhotosQuerySchema, publicAlbumQuerySchema, publicEventQuerySchema } from "./public.schemas.js";
 
 const PHOTO_ROOT = "coracao-gaucho/fotos";
@@ -174,7 +172,11 @@ export async function soldQuantity(eventId: number) {
       eventId,
       order: {
         status: { notIn: ["CANCELADO", "EXPIRADO"] },
-        paymentStatus: { in: ["PENDENTE", "PAGO"] }
+        OR: [
+          { paymentStatus: "PAGO" },
+          { paymentStatus: "PENDENTE", expiresAt: null },
+          { paymentStatus: "PENDENTE", expiresAt: { gt: new Date() } }
+        ]
       }
     },
     _sum: { quantity: true }
@@ -319,78 +321,6 @@ export const publicService = {
         nextCursor: nextOffset < total ? Buffer.from(String(nextOffset)).toString("base64url") : null,
         total
       };
-    }
-  },
-
-  async checkout(data: { eventId: number; quantity: number; buyer: { name: string; cpf: string; email: string; phone: string } }) {
-    if (data.quantity < 1) throw new AppError("A quantidade deve ser maior que zero", 422);
-    const event = await prisma.evento.findFirst({ where: { id: data.eventId, status: "ATIVO", data: { gte: new Date() } } });
-    if (!event) throw new AppError("Evento indisponivel para venda", 404);
-    if (event.dataLimiteInscricao && event.dataLimiteInscricao < new Date()) throw new AppError("Vendas encerradas", 409);
-    const sold = await soldQuantity(event.id);
-    if (event.capacidade != null && sold + data.quantity > event.capacidade) throw new AppError("Ingressos esgotados", 409);
-    const unitPrice = calculateEventUnitPrice(event);
-    const total = unitPrice * data.quantity;
-    const code = `WEB-${randomUUID().replace(/-/g, "").slice(0, 12).toUpperCase()}`;
-
-    const order = await prisma.$transaction(async (tx) => {
-      const customer = await tx.customer.upsert({
-        where: { cpf: data.buyer.cpf },
-        update: { nome: data.buyer.name, email: data.buyer.email, telefone: data.buyer.phone },
-        create: { nome: data.buyer.name, cpf: data.buyer.cpf, email: data.buyer.email, telefone: data.buyer.phone }
-      });
-      const existing = await tx.pedido.findFirst({
-        where: { customerId: customer.id, eventId: event.id, status: { notIn: ["CANCELADO", "EXPIRADO", "FALHOU"] } }
-      });
-      if (existing) throw new AppError("Ja existe um pedido ativo para este CPF e evento", 409);
-      return tx.pedido.create({
-        data: {
-          code,
-          type: "EVENT",
-          customerId: customer.id,
-          eventId: event.id,
-          status: total === 0 ? "PAGO" : "PENDENTE",
-          paymentStatus: total === 0 ? "PAGO" : "PENDENTE",
-          paymentMethod: total === 0 ? "GRATUITO" : "ABACATEPAY",
-          total,
-          notes: JSON.stringify({ source: "PUBLIC_CHECKOUT", tipoVenda: event.tipo, statusVenda: total === 0 ? "PAGO" : "PENDENTE" }),
-          items: { create: [{ description: `${event.tipo} - ${event.nome}`, quantity: data.quantity, unitPrice, total }] }
-        },
-        include: { customer: true, evento: true, items: true }
-      });
-    });
-
-    if (total === 0) {
-      await prisma.ingresso.createMany({ data: Array.from({ length: data.quantity }, () => ({ customerId: order.customerId, eventoId: event.id, preco: 0, qrcode: `TKT-${randomUUID()}`, status: "PAGO", paymentStatus: "PAGO", paidAt: new Date() })) });
-      return { orderCode: order.code, status: "PAGO", free: true, total: 0, checkoutUrl: null };
-    }
-
-    await prisma.ingresso.createMany({ data: Array.from({ length: data.quantity }, () => ({ customerId: order.customerId, eventoId: event.id, preco: unitPrice, qrcode: `TKT-${randomUUID()}`, status: "PENDENTE", paymentStatus: "PENDENTE" })) });
-    try {
-      const payment = await pagamentosService.criarCobranca({
-        customerId: order.customerId,
-        eventoId: event.id,
-        valor: total,
-        descricao: `${event.tipo} - ${event.nome}`,
-        metodos: ["PIX", "CARD"],
-        metadata: { externalId: order.code, pedidoId: order.id, tipo: "PUBLIC_CHECKOUT" },
-        itens: order.items.map((item) => ({
-          externalId: `pedido-item-${item.id}`,
-          name: item.description,
-          description: item.description,
-          quantity: item.quantity,
-          price: Math.round(Number(item.unitPrice) * 100)
-        }))
-      });
-      await prisma.pedido.update({
-        where: { id: order.id },
-        data: { notes: JSON.stringify({ source: "PUBLIC_CHECKOUT", tipoVenda: event.tipo, statusVenda: "PENDENTE", pagamentoId: payment.id, gatewayId: payment.gatewayId, checkoutUrl: payment.checkoutUrl }) }
-      });
-      return { orderCode: order.code, status: "PENDENTE", free: false, total, checkoutUrl: payment.checkoutUrl };
-    } catch (error) {
-      await prisma.pedido.update({ where: { id: order.id }, data: { status: "FALHOU", paymentStatus: "FALHOU" } });
-      await prisma.ingresso.updateMany({ where: { customerId: order.customerId, eventoId: event.id, paymentStatus: "PENDENTE" }, data: { status: "FALHOU", paymentStatus: "FALHOU" } });
-      throw error;
     }
   },
 

@@ -9,29 +9,29 @@ datasource db {
 }
 
 model Customer {
-  id          Int          @id @default(autoincrement())
-  nome        String
-  cpf         String       @unique
-  telefone    String
-  email       String?
-  cep         String?
-  endereco    String?
-  numero      String?
-  complemento String?
-  bairro      String?
-  cidade      String?
-  estado      String?
-  dataNascimento DateTime? @db.Date
-  sexo        String?
-  createdAt   DateTime     @default(now()) @db.Timestamp(6)
-  updatedAt   DateTime     @default(now()) @db.Timestamp(6)
-  ingresso    Ingresso[]
-  inscricao   Inscricao[]
-  pagamento   Pagamento[]
-  colaborador Colaborador?
-  pedidos     Pedido[]
-  userId      String?      @unique
-  user        User?        @relation(fields: [userId], references: [id], onDelete: SetNull)
+  id             Int          @id @default(autoincrement())
+  nome           String
+  cpf            String       @unique
+  telefone       String
+  email          String?
+  cep            String?
+  endereco       String?
+  numero         String?
+  complemento    String?
+  bairro         String?
+  cidade         String?
+  estado         String?
+  dataNascimento DateTime?    @db.Date
+  sexo           String?
+  createdAt      DateTime     @default(now()) @db.Timestamp(6)
+  updatedAt      DateTime     @default(now()) @db.Timestamp(6)
+  ingresso       Ingresso[]
+  inscricao      Inscricao[]
+  pagamento      Pagamento[]
+  colaborador    Colaborador?
+  pedidos        Pedido[]
+  userId         String?      @unique
+  user           User?        @relation(fields: [userId], references: [id], onDelete: SetNull)
 
   @@index([cpf], map: "idx_customer_cpf")
   @@index([telefone], map: "idx_customer_telefone")
@@ -117,7 +117,7 @@ model Inscricao {
   padrinhos                     Json?
   customer                      Customer            @relation(fields: [customerId], references: [id], onDelete: Cascade, onUpdate: NoAction)
   evento                        Evento              @relation(fields: [eventoId], references: [id], onDelete: Cascade, onUpdate: NoAction)
-  pagamento                     Pagamento?
+  pagamentos                    Pagamento[]
   lotesIngressos                LoteIngressoAluno[]
   orderId                       Int?
   order                         Pedido?             @relation(fields: [orderId], references: [id], onDelete: SetNull)
@@ -130,28 +130,49 @@ model Inscricao {
 }
 
 model Pagamento {
-  id           Int             @id @default(autoincrement())
-  inscricaoId  Int?            @unique
-  customerId   Int
-  eventoId     Int
-  nomeCustomer String
-  cpfCustomer  String
-  valor        Float
-  status       PagamentoStatus @default(PENDENTE)
-  gatewayId    String?         @unique
-  checkoutUrl  String?
-  rawWebhook   String?
-  paidAt       DateTime?       @db.Timestamp(6)
-  createdAt    DateTime        @default(now()) @db.Timestamp(6)
-  updatedAt    DateTime        @default(now()) @db.Timestamp(6)
-  customer     Customer        @relation(fields: [customerId], references: [id], onDelete: NoAction, onUpdate: NoAction)
-  evento       Evento          @relation(fields: [eventoId], references: [id], onDelete: NoAction, onUpdate: NoAction)
-  inscricao    Inscricao?      @relation(fields: [inscricaoId], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  id                      Int              @id @default(autoincrement())
+  inscricaoId             Int?
+  pedidoId                Int?
+  customerId              Int
+  eventoId                Int
+  nomeCustomer            String
+  cpfCustomer             String
+  valor                   Float
+  status                  PagamentoStatus  @default(PENDENTE)
+  gatewayId               String?          @unique
+  checkoutUrl             String?
+  rawWebhook              String?
+  provider                PaymentProvider?
+  amount                  Int
+  currency                String           @default("brl")
+  stripeCheckoutSessionId String?          @unique
+  stripePaymentIntentId   String?          @unique
+  stripeCustomerId        String?
+  stripeChargeId          String?          @unique
+  stripeDisputeId         String?          @unique
+  expiresAt               DateTime?        @db.Timestamp(6)
+  failureReason           String?
+  rawProviderData         Json?
+  paidAt                  DateTime?        @db.Timestamp(6)
+  refundedAmount          Int              @default(0)
+  refundedAt              DateTime?        @db.Timestamp(6)
+  disputedAmount          Int              @default(0)
+  disputeStatus           String?
+  statusBeforeDispute     PagamentoStatus?
+  createdAt               DateTime         @default(now()) @db.Timestamp(6)
+  updatedAt               DateTime         @default(now()) @db.Timestamp(6)
+  customer                Customer         @relation(fields: [customerId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  evento                  Evento           @relation(fields: [eventoId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  inscricao               Inscricao?       @relation(fields: [inscricaoId], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  pedido                  Pedido?          @relation(fields: [pedidoId], references: [id], onDelete: SetNull, onUpdate: NoAction)
+  refunds                 PaymentRefund[]
 
   @@index([customerId], map: "idx_pagamento_customer")
   @@index([eventoId], map: "idx_pagamento_evento")
   @@index([gatewayId], map: "idx_pagamento_gateway")
   @@index([status], map: "idx_pagamento_status")
+  @@index([pedidoId], map: "idx_pagamento_pedido")
+  @@index([inscricaoId], map: "idx_pagamento_inscricao")
   @@map("pagamento")
 }
 
@@ -313,7 +334,9 @@ model LoteIngressoAluno {
   notes              String?
   createdAt          DateTime               @default(now()) @db.Timestamp(6)
   updatedAt          DateTime               @updatedAt @db.Timestamp(6)
+  pedidoId           Int?                   @unique
   inscricao          Inscricao              @relation(fields: [inscricaoId], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  pedido             Pedido?                @relation(fields: [pedidoId], references: [id], onDelete: SetNull, onUpdate: NoAction)
   tickets            IngressoAluno[]
   historico          HistoricoPagamento[]
   comprovantes       ComprovantePagamento[]
@@ -432,28 +455,33 @@ model Empresa {
 }
 
 model Pedido {
-  id                  Int          @id @default(autoincrement())
-  code                String       @unique
+  id                  Int                @id @default(autoincrement())
+  code                String             @unique
   type                PedidoType
   customerId          Int
   eventId             Int?
   userId              String?
-  status              String       @default("PENDENTE")
-  paymentStatus       String?      @default("PENDENTE")
+  status              String             @default("PENDENTE")
+  paymentStatus       String?            @default("PENDENTE")
   paymentMethod       String?
-  total               Float        @default(0)
-  isCourtesy          Boolean      @default(false)
+  total               Float              @default(0)
+  totalAmount         Int                @default(0)
+  origin              SaleOrigin?
+  expiresAt           DateTime?          @db.Timestamp(6)
+  isCourtesy          Boolean            @default(false)
   courtesyReason      String?
   courtesyResponsible String?
   notes               String?
-  createdAt           DateTime     @default(now()) @db.Timestamp(6)
-  updatedAt           DateTime     @updatedAt @db.Timestamp(6)
-  customer            Customer     @relation(fields: [customerId], references: [id], onDelete: NoAction, onUpdate: NoAction)
-  evento              Evento?      @relation(fields: [eventId], references: [id], onDelete: SetNull, onUpdate: NoAction)
-  user                User?        @relation(fields: [userId], references: [id], onDelete: SetNull)
+  createdAt           DateTime           @default(now()) @db.Timestamp(6)
+  updatedAt           DateTime           @updatedAt @db.Timestamp(6)
+  customer            Customer           @relation(fields: [customerId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  evento              Evento?            @relation(fields: [eventId], references: [id], onDelete: SetNull, onUpdate: NoAction)
+  user                User?              @relation(fields: [userId], references: [id], onDelete: SetNull)
   items               PedidoItem[]
   ingressos           Ingresso[]
   inscricoes          Inscricao[]
+  pagamentos          Pagamento[]
+  loteIngresso        LoteIngressoAluno?
 
   @@index([type], map: "idx_pedido_type")
   @@index([status], map: "idx_pedido_status")
@@ -462,6 +490,8 @@ model Pedido {
   @@index([eventId], map: "idx_pedido_event")
   @@index([userId])
   @@index([createdAt], map: "idx_pedido_created_at")
+  @@index([origin], map: "idx_pedido_origin")
+  @@index([expiresAt], map: "idx_pedido_expires_at")
   @@map("pedido")
 }
 
@@ -475,6 +505,8 @@ model PedidoItem {
   quantity    Int
   unitPrice   Float
   total       Float
+  unitAmount  Int      @default(0)
+  totalAmount Int      @default(0)
   createdAt   DateTime @default(now()) @db.Timestamp(6)
   updatedAt   DateTime @updatedAt @db.Timestamp(6)
   order       Pedido   @relation(fields: [orderId], references: [id], onDelete: Cascade, onUpdate: NoAction)
@@ -502,9 +534,81 @@ enum InscricaoStatus {
 
 enum PagamentoStatus {
   PENDENTE
+  PROCESSANDO
   PAGO
   FALHOU
+  CANCELADO
+  EXPIRADO
   ESTORNADO
+  PARCIALMENTE_ESTORNADO
+  CONTESTADO
+  CONTESTACAO_PERDIDA
+}
+
+enum PaymentProvider {
+  STRIPE
+}
+
+enum SaleOrigin {
+  SITE
+  WHATSAPP
+  PAINEL_ADMIN
+}
+
+model PaymentWebhookEvent {
+  id           String          @id @default(cuid())
+  provider     PaymentProvider
+  externalId   String          @unique
+  type         String
+  status       String          @default("RECEIVED")
+  attempts     Int             @default(0)
+  error        String?
+  processingAt DateTime?       @db.Timestamp(6)
+  processedAt  DateTime?       @db.Timestamp(6)
+  payload      Json?
+  createdAt    DateTime        @default(now()) @db.Timestamp(6)
+  updatedAt    DateTime        @updatedAt @db.Timestamp(6)
+
+  @@index([provider, type])
+  @@index([processedAt])
+  @@map("payment_webhook_event")
+}
+
+model PaymentRefund {
+  id              String    @id @default(cuid())
+  pagamentoId     Int
+  stripeRefundId  String?   @unique
+  amount          Int
+  currency        String    @default("brl")
+  status          String    @default("PENDENTE")
+  reason          String
+  stripeReason    String?
+  requestedById   Int?
+  failureReason   String?
+  rawProviderData Json?
+  refundedAt      DateTime? @db.Timestamp(6)
+  createdAt       DateTime  @default(now()) @db.Timestamp(6)
+  updatedAt       DateTime  @updatedAt @db.Timestamp(6)
+  pagamento       Pagamento @relation(fields: [pagamentoId], references: [id], onDelete: Restrict, onUpdate: NoAction)
+
+  @@index([pagamentoId, createdAt])
+  @@index([status])
+  @@map("payment_refund")
+}
+
+model IntegrationOutbox {
+  id               String    @id @default(cuid())
+  topic            String
+  deduplicationKey String    @unique
+  payload          Json
+  status           String    @default("PENDENTE")
+  attempts         Int       @default(0)
+  processedAt      DateTime? @db.Timestamp(6)
+  createdAt        DateTime  @default(now()) @db.Timestamp(6)
+  updatedAt        DateTime  @updatedAt @db.Timestamp(6)
+
+  @@index([status, createdAt])
+  @@map("integration_outbox")
 }
 
 enum TipoEvento {

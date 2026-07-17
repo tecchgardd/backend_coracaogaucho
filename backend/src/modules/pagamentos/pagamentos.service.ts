@@ -1,29 +1,241 @@
-import { Prisma } from "@prisma/client";
-import { abacatePay } from "../../lib/abacatepay.js";
+import { randomUUID } from "node:crypto";
+import { Prisma, type SaleOrigin } from "@prisma/client";
+import type Stripe from "stripe";
+import type { z } from "zod";
+import { env } from "../../env.js";
 import { prisma } from "../../lib/prisma.js";
+import { stripe } from "../../lib/stripe.js";
 import { AppError } from "../../utils/http.js";
 import { getPagination } from "../common/schemas.js";
-import type { z } from "zod";
-import type { criarCobrancaSchema, pagamentoQuerySchema } from "./pagamentos.schemas.js";
+import type { cancelPaymentSchema, pagamentoQuerySchema, refundPaymentSchema, whatsappCheckoutSchema } from "./pagamentos.schemas.js";
 
-function nestedData(response: Record<string, unknown>) {
-  return typeof response.data === "object" && response.data !== null
-    ? (response.data as Record<string, unknown>)
-    : {};
+const RESERVATION_MINUTES = 30;
+const MAX_TICKETS_PER_CUSTOMER_EVENT = 10;
+
+type PaymentActor = {
+  customerId?: number;
+  userId?: string;
+  admin?: boolean;
+};
+
+type AdminActor = {
+  userId: string;
+  colaboradorId: number;
+  role: string;
+  email: string;
+  name: string;
+};
+
+type DynamicLineItem = {
+  eventId: number;
+  description: string;
+  quantity: number;
+  unitAmount: number;
+};
+
+function paymentError(code: string, message: string, statusCode: number, details?: unknown) {
+  return new AppError(message, statusCode, { code, ...(details ? { details } : {}) });
 }
 
-function pickExternalId(response: Record<string, unknown>) {
-  const data = nestedData(response);
-  return String(response.id ?? response.externalId ?? data.id ?? data.billingId ?? "");
-}
-
-function pickCheckoutUrl(response: Record<string, unknown>) {
-  const data = nestedData(response);
-  return String(response.checkoutUrl ?? response.url ?? data.checkoutUrl ?? data.url ?? "");
-}
-
-function toCents(value: number) {
+export function toCents(value: number) {
   return Math.round(Number(value) * 100);
+}
+
+function fromCents(value: number) {
+  return value / 100;
+}
+
+function eventPriceInCents(event: { preco: number; precoAntecipado: number | null; dataLimiteAntecipado: Date | null }, now = new Date()) {
+  const value = event.precoAntecipado != null && event.dataLimiteAntecipado && event.dataLimiteAntecipado > now
+    ? event.precoAntecipado
+    : event.preco;
+  return toCents(value);
+}
+
+function safeProviderMessage(error: unknown) {
+  if (error && typeof error === "object" && "type" in error) return String((error as { type?: unknown }).type ?? "StripeError").slice(0, 120);
+  return "StripeError";
+}
+
+function activeReservationWhere(now: Date, excludedOrderId?: number): Prisma.PedidoWhereInput {
+  return {
+    id: excludedOrderId ? { not: excludedOrderId } : undefined,
+    status: { notIn: ["CANCELADO", "EXPIRADO", "FALHOU"] },
+    OR: [
+      { paymentStatus: "PAGO" },
+      { paymentStatus: { in: ["PENDENTE", "PROCESSANDO"] }, expiresAt: null },
+      { paymentStatus: { in: ["PENDENTE", "PROCESSANDO"] }, expiresAt: { gt: now } }
+    ]
+  };
+}
+
+export function isRetryableOrderStatus(status?: string | null) {
+  return ["FALHOU", "CANCELADO", "EXPIRADO"].includes(status ?? "");
+}
+
+async function validateAndRepriceOrder(tx: Prisma.TransactionClient, orderId: number) {
+  const now = new Date();
+  const order = await tx.pedido.findUnique({
+    where: { id: orderId },
+    include: { customer: true, evento: true, items: { include: { evento: true } }, loteIngresso: true }
+  });
+  if (!order) throw paymentError("ORDER_NOT_FOUND", "Pedido nao encontrado", 404);
+  if (order.paymentStatus === "PAGO") throw paymentError("ORDER_ALREADY_PAID", "Pedido ja esta pago", 409);
+  if (!order.customer.email) throw paymentError("INVALID_ORDER_STATUS", "Cliente sem e-mail para o checkout", 422);
+  if (!order.items.length) throw paymentError("INVALID_ORDER_STATUS", "Pedido sem itens", 409);
+  if (order.loteIngresso && (order.loteIngresso.status === "CANCELADO" || (order.loteIngresso.dueDate && order.loteIngresso.dueDate <= now))) {
+    throw paymentError("LOT_NOT_AVAILABLE", "Lote indisponivel para pagamento", 409, { lotId: order.loteIngresso.id });
+  }
+
+  const lines: DynamicLineItem[] = [];
+  for (const item of order.items) {
+    const event = item.evento ?? order.evento;
+    if (!event || event.status !== "ATIVO" || event.data <= now || (event.dataLimiteInscricao && event.dataLimiteInscricao <= now)) {
+      throw paymentError("EVENT_NOT_AVAILABLE", "Evento indisponivel para venda", 409, { eventId: item.eventId });
+    }
+    if (item.quantity < 1 || (!order.loteIngresso && item.quantity > MAX_TICKETS_PER_CUSTOMER_EVENT)) {
+      throw paymentError("INVALID_ORDER_STATUS", "Quantidade de ingressos invalida", 422, { eventId: event.id });
+    }
+
+    const [reserved, customerQuantity] = await Promise.all([
+      tx.pedidoItem.aggregate({
+        where: { eventId: event.id, order: activeReservationWhere(now, order.id) },
+        _sum: { quantity: true }
+      }),
+      tx.pedidoItem.aggregate({
+        where: {
+          eventId: event.id,
+          order: { ...activeReservationWhere(now, order.id), customerId: order.customerId }
+        },
+        _sum: { quantity: true }
+      })
+    ]);
+    if (event.capacidade != null && (reserved._sum.quantity ?? 0) + item.quantity > event.capacidade) {
+      throw paymentError("INSUFFICIENT_CAPACITY", "Quantidade indisponivel", 409, { eventId: event.id });
+    }
+    if (!order.loteIngresso && (customerQuantity._sum.quantity ?? 0) + item.quantity > MAX_TICKETS_PER_CUSTOMER_EVENT) {
+      throw paymentError("INSUFFICIENT_CAPACITY", "Limite de ingressos por cliente excedido", 409, { eventId: event.id });
+    }
+
+    const unitAmount = order.loteIngresso && item.ticketLotId === order.loteIngresso.id
+      ? toCents(Number(order.loteIngresso.valorUnitario))
+      : eventPriceInCents(event, now);
+    lines.push({ eventId: event.id, description: item.description, quantity: item.quantity, unitAmount });
+    await tx.pedidoItem.update({
+      where: { id: item.id },
+      data: { eventId: event.id, unitAmount, totalAmount: unitAmount * item.quantity, unitPrice: fromCents(unitAmount), total: fromCents(unitAmount * item.quantity) }
+    });
+  }
+
+  const amount = lines.reduce((sum, line) => sum + line.unitAmount * line.quantity, 0);
+  if (amount <= 0) throw paymentError("INVALID_ORDER_STATUS", "Pedido sem valor para cobranca", 409);
+  const expiresAt = new Date(now.getTime() + RESERVATION_MINUTES * 60_000);
+  const updated = await tx.pedido.update({
+    where: { id: order.id },
+    data: {
+      totalAmount: amount,
+      total: fromCents(amount),
+      status: "PENDENTE",
+      paymentStatus: "PENDENTE",
+      paymentMethod: "STRIPE",
+      expiresAt
+    }
+  });
+  if (order.loteIngresso) {
+    await tx.loteIngressoAluno.update({ where: { id: order.loteIngresso.id }, data: { status: "PENDENTE", paymentStatus: "PENDENTE", paymentUrl: null } });
+  }
+  return { order: { ...order, ...updated }, lines, amount, expiresAt };
+}
+
+async function createStripeAttempt(orderId: number, origin: SaleOrigin, actor: PaymentActor) {
+  const prepared = await prisma.$transaction(async (tx) => {
+    const current = await tx.pedido.findUnique({ where: { id: orderId } });
+    if (!current) throw paymentError("ORDER_NOT_FOUND", "Pedido nao encontrado", 404);
+    if (!actor.admin && (current.customerId !== actor.customerId || (actor.userId && current.userId !== actor.userId))) {
+      throw paymentError("ORDER_NOT_FOUND", "Pedido nao encontrado", 404);
+    }
+    const activeAttempt = await tx.pagamento.findFirst({
+      where: { pedidoId: orderId, status: { in: ["PENDENTE", "PROCESSANDO"] }, OR: [{ expiresAt: null }, { expiresAt: { gt: new Date() } }] }
+    });
+    if (activeAttempt) throw paymentError("INVALID_ORDER_STATUS", "Pedido ja possui uma tentativa de pagamento ativa", 409, { paymentId: activeAttempt.id });
+    const validated = await validateAndRepriceOrder(tx, orderId);
+    const firstEventId = validated.lines[0]?.eventId;
+    if (!firstEventId) throw paymentError("INVALID_ORDER_STATUS", "Pedido sem evento", 409);
+    const enrollment = await tx.inscricao.findFirst({ where: { orderId } });
+    const payment = await tx.pagamento.create({
+      data: {
+        pedidoId: orderId,
+        customerId: validated.order.customerId,
+        eventoId: firstEventId,
+        inscricaoId: enrollment?.id,
+        nomeCustomer: validated.order.customer.nome,
+        cpfCustomer: validated.order.customer.cpf,
+        valor: fromCents(validated.amount),
+        amount: validated.amount,
+        currency: env.STRIPE_CURRENCY,
+        provider: "STRIPE",
+        status: "PENDENTE",
+        expiresAt: validated.expiresAt
+      }
+    });
+    await tx.pedido.update({ where: { id: orderId }, data: { origin } });
+    return { ...validated, payment };
+  }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
+
+  const metadata: Record<string, string> = {
+    orderId: String(orderId),
+    paymentId: String(prepared.payment.id),
+    customerId: String(prepared.order.customerId),
+    origin,
+    orderType: prepared.order.type
+  };
+  if (prepared.order.eventId) metadata.eventId = String(prepared.order.eventId);
+  if (prepared.order.loteIngresso?.id) metadata.lotId = String(prepared.order.loteIngresso.id);
+  if (prepared.payment.inscricaoId) metadata.registrationId = String(prepared.payment.inscricaoId);
+  const course = prepared.order.items.find((item) => item.evento?.tipo === "CURSO");
+  if (course?.eventId) metadata.courseId = String(course.eventId);
+
+  try {
+    const params: Stripe.Checkout.SessionCreateParams = {
+      mode: "payment",
+      line_items: prepared.lines.map((line) => ({
+        price_data: {
+          currency: env.STRIPE_CURRENCY,
+          unit_amount: line.unitAmount,
+          product_data: { name: line.description.slice(0, 120), description: `Pedido ${prepared.order.code}` }
+        },
+        quantity: line.quantity
+      })),
+      customer_email: prepared.order.customer.email ?? undefined,
+      client_reference_id: String(orderId),
+      metadata,
+      payment_intent_data: { metadata },
+      success_url: `${env.FRONTEND_URL}/checkout/sucesso?session_id={CHECKOUT_SESSION_ID}`,
+      cancel_url: `${env.FRONTEND_URL}/checkout/cancelado?orderId=${orderId}`,
+      expires_at: Math.floor(prepared.expiresAt.getTime() / 1000)
+    };
+    const session = await stripe.checkout.sessions.create(params, { idempotencyKey: `checkout-payment-${prepared.payment.id}` });
+    if (!session.url) throw new Error("Checkout Session sem URL");
+    const paymentIntentId = typeof session.payment_intent === "string" ? session.payment_intent : session.payment_intent?.id;
+    const payment = await prisma.pagamento.update({
+      where: { id: prepared.payment.id },
+      data: {
+        stripeCheckoutSessionId: session.id,
+        stripePaymentIntentId: paymentIntentId,
+        stripeCustomerId: typeof session.customer === "string" ? session.customer : session.customer?.id,
+        checkoutUrl: session.url,
+        rawProviderData: { id: session.id, status: session.status, paymentStatus: session.payment_status }
+      }
+    });
+    return { orderId, paymentId: payment.id, checkoutSessionId: session.id, checkoutUrl: session.url, status: payment.status };
+  } catch (error) {
+    const failureReason = safeProviderMessage(error);
+    await prisma.$transaction([
+      prisma.pagamento.update({ where: { id: prepared.payment.id }, data: { status: "FALHOU", failureReason } }),
+      prisma.pedido.update({ where: { id: orderId }, data: { status: "FALHOU", paymentStatus: "FALHOU", expiresAt: new Date() } })
+    ]);
+    throw paymentError("CHECKOUT_CREATION_FAILED", "Nao foi possivel iniciar o pagamento", 503);
+  }
 }
 
 export function buildPaymentShareText(data: { nome: string; descricao: string; valor: number; checkoutUrl: string }) {
@@ -37,94 +249,192 @@ export function buildPaymentShareText(data: { nome: string; descricao: string; v
 
 export const pagamentosService = {
   async listar(query: z.infer<typeof pagamentoQuerySchema>) {
-    const where: Prisma.PagamentoWhereInput = {
-      status: query.status,
-      customerId: query.customerId
-    };
+    const where: Prisma.PagamentoWhereInput = { status: query.status, customerId: query.customerId };
     const [data, total] = await Promise.all([
-      prisma.pagamento.findMany({
-        where,
-        ...getPagination(query),
-        include: { customer: true, evento: true, inscricao: true },
-        orderBy: { createdAt: "desc" }
-      }),
+      prisma.pagamento.findMany({ where, ...getPagination(query), include: { customer: true, evento: true, inscricao: true, pedido: true }, orderBy: { createdAt: "desc" } }),
       prisma.pagamento.count({ where })
     ]);
     return { data, total, page: query.page, limit: query.limit };
   },
 
   async buscar(id: number) {
-    const pagamento = await prisma.pagamento.findUnique({
-      where: { id },
-      include: { customer: true, evento: true, inscricao: true }
-    });
-    if (!pagamento) throw new AppError("Pagamento nao encontrado", 404);
-    return pagamento;
+    const payment = await prisma.pagamento.findUnique({ where: { id }, include: { customer: true, evento: true, inscricao: true, pedido: true } });
+    if (!payment) throw paymentError("ORDER_NOT_FOUND", "Pagamento nao encontrado", 404);
+    return payment;
   },
 
-  async criarCobranca(data: z.infer<typeof criarCobrancaSchema>) {
-    const externalId = String(data.metadata.externalId ?? data.metadata.pedidoId ?? data.metadata.loteId ?? `pagamento-${Date.now()}`);
-    const response = await abacatePay.criarCobranca({
-      frequency: "ONE_TIME",
-      methods: data.metodos,
-      description: data.descricao,
-      products: data.itens.length
-        ? data.itens
-        : [{
-            externalId,
-            name: data.descricao ?? "Pagamento Coracao Gaucho",
-            description: data.descricao ?? "Pagamento Coracao Gaucho",
-            quantity: 1,
-            price: toCents(data.valor)
-          }],
-      externalId,
-      metadata: data.metadata,
-      allowCoupons: false
+  createCheckoutForOrder(orderId: number, origin: SaleOrigin, actor: PaymentActor) {
+    return createStripeAttempt(orderId, origin, actor);
+  },
+
+  async retry(orderId: number, actor: PaymentActor) {
+    const order = await prisma.pedido.findFirst({ where: { id: orderId, ...(actor.admin ? {} : { customerId: actor.customerId, userId: actor.userId }) } });
+    if (!order) throw paymentError("ORDER_NOT_FOUND", "Pedido nao encontrado", 404);
+    if (order.paymentStatus === "PAGO") throw paymentError("ORDER_ALREADY_PAID", "Pedido ja esta pago", 409);
+    if (!isRetryableOrderStatus(order.paymentStatus ?? order.status)) {
+      throw paymentError("INVALID_ORDER_STATUS", "Pedido ainda possui uma tentativa ativa", 409);
+    }
+    return createStripeAttempt(orderId, "SITE", actor);
+  },
+
+  async status(orderId: number, actor: PaymentActor) {
+    const order = await prisma.pedido.findFirst({
+      where: { id: orderId, ...(actor.admin ? {} : { customerId: actor.customerId, userId: actor.userId }) },
+      include: { pagamentos: { orderBy: { createdAt: "desc" }, take: 1 } }
     });
+    if (!order) throw paymentError("ORDER_NOT_FOUND", "Pedido nao encontrado", 404);
+    const attempt = order.pagamentos[0];
+    return {
+      orderId: order.id,
+      orderStatus: order.status,
+      paymentStatus: attempt?.status ?? order.paymentStatus ?? order.status,
+      checkoutStatus: attempt?.status === "EXPIRADO" ? "expired" : attempt?.status === "PAGO" ? "complete" : attempt?.status === "PROCESSANDO" ? "processing" : "open",
+      paidAt: attempt?.paidAt ?? null,
+      paymentId: attempt?.id ?? null
+    };
+  },
 
-    const raw = response as Record<string, unknown>;
-    const customer = await prisma.customer.findUnique({ where: { id: data.customerId } });
-    if (!customer) throw new AppError("Customer nao encontrado", 404);
-
-    return prisma.pagamento.create({
+  async createWhatsappOrder(data: z.infer<typeof whatsappCheckoutSchema>) {
+    const customer = await prisma.customer.upsert({
+      where: { cpf: data.customer.cpf },
+      update: { nome: data.customer.name, email: data.customer.email, telefone: data.customer.phone },
+      create: { nome: data.customer.name, cpf: data.customer.cpf, email: data.customer.email, telefone: data.customer.phone }
+    });
+    const event = await prisma.evento.findUnique({ where: { id: data.eventId } });
+    if (!event || event.status !== "ATIVO" || event.data <= new Date()) throw paymentError("EVENT_NOT_AVAILABLE", "Evento indisponivel", 409);
+    const unitAmount = eventPriceInCents(event);
+    const totalAmount = unitAmount * data.quantity;
+    const order = await prisma.pedido.create({
       data: {
-        customerId: data.customerId,
-        eventoId: data.eventoId,
-        inscricaoId: data.inscricaoId,
-        nomeCustomer: customer.nome,
-        cpfCustomer: customer.cpf,
-        valor: data.valor,
-        gatewayId: pickExternalId(raw) || undefined,
-        checkoutUrl: pickCheckoutUrl(raw),
-        rawWebhook: JSON.stringify({ request: data, response: raw })
+        code: `WPP-${randomUUID().replace(/-/g, "").slice(0, 12).toUpperCase()}`,
+        type: "EVENT",
+        customerId: customer.id,
+        eventId: event.id,
+        status: "PENDENTE",
+        paymentStatus: "PENDENTE",
+        paymentMethod: "STRIPE",
+        total: fromCents(totalAmount),
+        totalAmount,
+        origin: "WHATSAPP",
+        notes: JSON.stringify({ source: "WHATSAPP_CHECKOUT" }),
+        items: { create: [{ eventId: event.id, description: `${event.tipo} - ${event.nome}`, quantity: data.quantity, unitPrice: fromCents(unitAmount), total: fromCents(totalAmount), unitAmount, totalAmount }] }
       }
     });
+    if (totalAmount === 0) {
+      try {
+        await prisma.$transaction(async (tx) => {
+          const current = await tx.evento.findUnique({ where: { id: event.id } });
+          const reserved = await tx.pedidoItem.aggregate({ where: { eventId: event.id, order: activeReservationWhere(new Date(), order.id) }, _sum: { quantity: true } });
+          if (!current || current.status !== "ATIVO" || (current.capacidade != null && (reserved._sum.quantity ?? 0) + data.quantity > current.capacidade)) {
+            throw paymentError("INSUFFICIENT_CAPACITY", "Quantidade indisponivel", 409, { eventId: event.id });
+          }
+          await tx.pedido.update({ where: { id: order.id }, data: { status: "PAGO", paymentStatus: "PAGO", paymentMethod: "GRATUITO" } });
+          if (event.tipo === "CURSO") {
+            await tx.inscricao.upsert({
+              where: { customerId_eventoId: { customerId: customer.id, eventoId: event.id } },
+              update: { orderId: order.id, status: "CONFIRMADA", quantidadeParticipantes: data.quantity },
+              create: { customerId: customer.id, eventoId: event.id, orderId: order.id, status: "CONFIRMADA", quantidadeParticipantes: data.quantity }
+            });
+          } else {
+            await tx.ingresso.createMany({
+              data: Array.from({ length: data.quantity }, (_, index) => ({ customerId: customer.id, eventoId: event.id, orderId: order.id, preco: 0, qrcode: `TKT-${order.id}-${event.id}-${index + 1}`, status: "PAGO", paymentStatus: "PAGO", paidAt: new Date() })),
+              skipDuplicates: true
+            });
+          }
+        }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
+        return { orderId: order.id, paymentId: null, checkoutSessionId: null, checkoutUrl: null, status: "PAGO" as const };
+      } catch (error) {
+        await prisma.pedido.update({ where: { id: order.id }, data: { status: "FALHOU", paymentStatus: "FALHOU", expiresAt: new Date() } });
+        throw error;
+      }
+    }
+    try {
+      return await createStripeAttempt(order.id, "WHATSAPP", { customerId: customer.id });
+    } catch (error) {
+      await prisma.pedido.update({ where: { id: order.id }, data: { status: "FALHOU", paymentStatus: "FALHOU", expiresAt: new Date() } });
+      throw error;
+    }
   },
 
-  async confirmar(id: number) {
-    const pagamento = await this.buscar(id);
-    const atualizado = await prisma.pagamento.update({
-      where: { id },
+  async cancel(id: number, actor: AdminActor, data: z.infer<typeof cancelPaymentSchema>) {
+    const payment = await this.buscar(id);
+    if (["PAGO", "PARCIALMENTE_ESTORNADO", "ESTORNADO", "CONTESTADO", "CONTESTACAO_PERDIDA"].includes(payment.status)) {
+      throw paymentError("ORDER_ALREADY_PAID", "Pagamento confirmado nao pode ser cancelado; use o fluxo de reembolso", 409);
+    }
+    if (payment.stripeCheckoutSessionId) {
+      try {
+        const session = await stripe.checkout.sessions.retrieve(payment.stripeCheckoutSessionId);
+        if (session.payment_status === "paid") throw paymentError("ORDER_ALREADY_PAID", "Pagamento ja confirmado", 409);
+        if (session.status === "open") await stripe.checkout.sessions.expire(session.id);
+      } catch (error) {
+        if (error instanceof AppError) throw error;
+        throw paymentError("PAYMENT_PROVIDER_UNAVAILABLE", "Nao foi possivel cancelar a sessao de pagamento", 503);
+      }
+    }
+    if (payment.stripePaymentIntentId) {
+      try {
+        const intent = await stripe.paymentIntents.retrieve(payment.stripePaymentIntentId);
+        if (intent.status === "succeeded") throw paymentError("ORDER_ALREADY_PAID", "Pagamento ja confirmado", 409);
+        if (["requires_payment_method", "requires_confirmation", "requires_action", "requires_capture", "processing"].includes(intent.status)) {
+          await stripe.paymentIntents.cancel(intent.id);
+        }
+      } catch (error) {
+        if (error instanceof AppError) throw error;
+        throw paymentError("PAYMENT_PROVIDER_UNAVAILABLE", "Nao foi possivel cancelar o PaymentIntent", 503);
+      }
+    }
+    await prisma.$transaction(async (tx) => {
+      await tx.pagamento.update({ where: { id }, data: { status: "CANCELADO", expiresAt: new Date(), failureReason: data.reason } });
+      if (payment.pedidoId) await tx.pedido.update({ where: { id: payment.pedidoId }, data: { status: "CANCELADO", paymentStatus: "CANCELADO", expiresAt: new Date() } });
+      await tx.auditLog.create({ data: { action: "PAGAMENTO_CANCELADO", entity: "Pagamento", entityId: String(id), colaboradorId: actor.colaboradorId, metadata: { reason: data.reason, orderId: payment.pedidoId } } });
+    });
+    return this.buscar(id);
+  },
+
+  async refund(id: number, actor: AdminActor, data: z.infer<typeof refundPaymentSchema>) {
+    const payment = await prisma.pagamento.findUnique({ where: { id }, include: { refunds: true } });
+    if (!payment) throw paymentError("ORDER_NOT_FOUND", "Pagamento nao encontrado", 404);
+    if (!payment.stripePaymentIntentId || !["PAGO", "PARCIALMENTE_ESTORNADO"].includes(payment.status)) {
+      throw paymentError("INVALID_ORDER_STATUS", "Pagamento nao esta disponivel para reembolso", 409);
+    }
+    const remaining = payment.amount - payment.refundedAmount;
+    const amount = data.amount ?? remaining;
+    if (amount <= 0 || amount > remaining) throw paymentError("INVALID_REFUND_AMOUNT", "Valor de reembolso invalido", 422, { remaining });
+
+    const localRefund = await prisma.paymentRefund.create({
       data: {
-        status: "PAGO",
-        paidAt: new Date()
+        pagamentoId: payment.id,
+        amount,
+        currency: payment.currency,
+        reason: data.reason,
+        stripeReason: data.stripeReason,
+        requestedById: actor.colaboradorId
       }
     });
-    await prisma.ingresso.updateMany({ where: { customerId: pagamento.customerId, eventoId: pagamento.eventoId }, data: { status: "PAGO", paymentStatus: "PAGO" } });
-    if (pagamento.inscricaoId) {
-      await prisma.inscricao.update({ where: { id: pagamento.inscricaoId }, data: { status: "CONFIRMADA" } });
+    try {
+      const refund = await stripe.refunds.create({
+        payment_intent: payment.stripePaymentIntentId,
+        amount,
+        reason: data.stripeReason,
+        metadata: { paymentId: String(payment.id), orderId: String(payment.pedidoId ?? ""), refundId: localRefund.id }
+      }, { idempotencyKey: `payment-refund-${localRefund.id}` });
+      const succeeded = refund.status === "succeeded";
+      const refundedAmount = succeeded ? payment.refundedAmount + refund.amount : payment.refundedAmount;
+      const nextStatus = succeeded ? (refundedAmount >= payment.amount ? "ESTORNADO" : "PARCIALMENTE_ESTORNADO") : payment.status;
+      await prisma.$transaction(async (tx) => {
+        await tx.paymentRefund.update({
+          where: { id: localRefund.id },
+          data: { stripeRefundId: refund.id, status: String(refund.status ?? "pending").toUpperCase(), rawProviderData: { id: refund.id, status: refund.status, amount: refund.amount }, refundedAt: succeeded ? new Date() : null }
+        });
+        await tx.pagamento.update({ where: { id: payment.id }, data: { status: nextStatus, refundedAmount, refundedAt: succeeded ? new Date() : payment.refundedAt } });
+        if (payment.pedidoId && succeeded) await tx.pedido.update({ where: { id: payment.pedidoId }, data: { status: nextStatus, paymentStatus: nextStatus } });
+        await tx.auditLog.create({ data: { action: "REEMBOLSO_STRIPE_SOLICITADO", entity: "Pagamento", entityId: String(payment.id), colaboradorId: actor.colaboradorId, metadata: { refundId: localRefund.id, stripeRefundId: refund.id, amount, reason: data.reason, status: refund.status } } });
+      });
+      return { success: true, data: { paymentId: payment.id, refundId: localRefund.id, stripeRefundId: refund.id, amount, currency: payment.currency, status: refund.status } };
+    } catch (error) {
+      const failureReason = safeProviderMessage(error);
+      await prisma.paymentRefund.update({ where: { id: localRefund.id }, data: { status: "FALHOU", failureReason } });
+      throw paymentError("PAYMENT_PROVIDER_UNAVAILABLE", "Nao foi possivel solicitar o reembolso", 503);
     }
-    return atualizado;
-  },
-
-  async cancelar(id: number) {
-    const pagamento = await this.buscar(id);
-    if (pagamento.gatewayId) {
-      await abacatePay.cancelarCobranca(pagamento.gatewayId);
-    }
-    return prisma.pagamento.update({
-      where: { id },
-      data: { status: "FALHOU" }
-    });
   }
 };

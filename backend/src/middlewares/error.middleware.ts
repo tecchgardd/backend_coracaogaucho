@@ -23,9 +23,10 @@ export function errorMiddleware(error: unknown, _req: Request, res: Response, _n
 
   const maybeError = error as { message?: string; statusCode?: number; details?: unknown };
   const statusCode = maybeError.statusCode ?? 500;
+  const isServerError = statusCode >= 500;
 
   return res.status(statusCode).json({
-    message: maybeError.message ?? "Erro interno do servidor",
+    message: isServerError ? "Erro interno do servidor" : maybeError.message ?? "Erro ao processar a requisicao",
     details: process.env.NODE_ENV === "development" ? maybeError.details ?? error : undefined
   });
 }

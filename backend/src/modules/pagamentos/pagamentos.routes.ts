@@ -1,13 +1,23 @@
 import { Router } from "express";
-import { idParamSchema } from "../common/schemas.js";
+import { customerAuthMiddleware } from "../../middlewares/customer-auth.middleware.js";
+import { checkoutRateLimit } from "../../middlewares/checkout-rate-limit.middleware.js";
+import { requireRoles } from "../../middlewares/role.middleware.js";
 import { asyncHandler, validate } from "../../utils/http.js";
+import { idParamSchema } from "../common/schemas.js";
 import { pagamentosController } from "./pagamentos.controller.js";
-import { criarCobrancaSchema, pagamentoQuerySchema } from "./pagamentos.schemas.js";
+import { cancelPaymentSchema, checkoutSchema, orderParamSchema, pagamentoQuerySchema, refundPaymentSchema, whatsappCheckoutSchema } from "./pagamentos.schemas.js";
 
 export const pagamentosRoutes = Router();
-
 pagamentosRoutes.get("/", validate({ query: pagamentoQuerySchema }), asyncHandler(pagamentosController.listar));
 pagamentosRoutes.get("/:id", validate({ params: idParamSchema }), asyncHandler(pagamentosController.buscar));
-pagamentosRoutes.post("/criar-cobranca", validate({ body: criarCobrancaSchema }), asyncHandler(pagamentosController.criarCobranca));
-pagamentosRoutes.patch("/:id/confirmar", validate({ params: idParamSchema }), asyncHandler(pagamentosController.confirmar));
-pagamentosRoutes.patch("/:id/cancelar", validate({ params: idParamSchema }), asyncHandler(pagamentosController.cancelar));
+pagamentosRoutes.patch("/:id/cancelar", validate({ params: idParamSchema, body: cancelPaymentSchema }), asyncHandler(pagamentosController.cancelar));
+pagamentosRoutes.post("/:id/reembolsar", requireRoles("ADMIN"), validate({ params: idParamSchema, body: refundPaymentSchema }), asyncHandler(pagamentosController.reembolsar));
+
+export const customerPaymentsRoutes = Router();
+customerPaymentsRoutes.use(customerAuthMiddleware);
+customerPaymentsRoutes.post("/checkout", checkoutRateLimit, validate({ body: checkoutSchema }), asyncHandler(pagamentosController.checkout));
+customerPaymentsRoutes.post("/:orderId/retry", checkoutRateLimit, validate({ params: orderParamSchema }), asyncHandler(pagamentosController.retry));
+customerPaymentsRoutes.get("/:orderId/status", validate({ params: orderParamSchema }), asyncHandler(pagamentosController.status));
+
+export const integrationsRoutes = Router();
+integrationsRoutes.post("/whatsapp/checkout", checkoutRateLimit, validate({ body: whatsappCheckoutSchema }), asyncHandler(pagamentosController.whatsappCheckout));
