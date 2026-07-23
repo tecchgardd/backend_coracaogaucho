@@ -14,7 +14,14 @@ export const uploadsService = {
         },
         (error, result) => {
           if (error) return reject(error);
-          return resolve(result);
+          if (!result?.secure_url) return reject(new AppError("Cloudinary não retornou a URL segura da imagem", 502));
+          return resolve({
+            secure_url: result.secure_url,
+            public_id: result.public_id,
+            width: result.width,
+            height: result.height,
+            format: result.format
+          });
         }
       );
 

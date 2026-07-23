@@ -18,8 +18,9 @@ const eventoBaseSchema = z.object({
   capacidade: z.number().int().positive().optional(),
   preco: z.number().nonnegative(),
   qrcode: z.string().optional(),
-  banner: z.string().url().optional(),
-  imagemUrl: z.string().url().optional(),
+  banner: z.string().trim().url().refine((url) => url.startsWith("https://"), "A URL do banner deve usar HTTPS").nullable().optional(),
+  // Alias legado mantido apenas na entrada. A API e o banco usam `banner`.
+  imagemUrl: z.string().trim().url().refine((url) => url.startsWith("https://"), "A URL da imagem deve usar HTTPS").nullable().optional(),
   observacao: z.string().optional(),
   descricao: z.string().optional(),
   atracao: z.string().optional(),
@@ -36,4 +37,7 @@ export const eventoCreateSchema = eventoBaseSchema.refine((data) => data.nome ||
   path: ["data"]
 });
 
-export const eventoUpdateSchema = eventoBaseSchema.partial();
+export const eventoUpdateSchema = eventoBaseSchema.extend({
+  tipo: z.enum(["BAILE", "CURSO", "EVENTO"]).optional(),
+  status: z.enum(["ATIVO", "INATIVO", "CANCELADO", "ENCERRADO"]).optional()
+}).partial();

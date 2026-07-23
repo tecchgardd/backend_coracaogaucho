@@ -6,7 +6,9 @@ import { getPagination } from "../common/schemas.js";
 import type { z } from "zod";
 import type { eventoCreateSchema, eventoQuerySchema, eventoUpdateSchema } from "./eventos.schemas.js";
 
-function mapEventoData(data: z.infer<typeof eventoUpdateSchema>) {
+export function mapEventoData(data: z.infer<typeof eventoUpdateSchema>) {
+  const banner = data.banner !== undefined ? data.banner : data.imagemUrl;
+
   return {
     nome: data.nome ?? data.titulo,
     tipo: data.tipo,
@@ -17,7 +19,7 @@ function mapEventoData(data: z.infer<typeof eventoUpdateSchema>) {
     capacidade: data.capacidade,
     preco: data.preco,
     qrcode: data.qrcode,
-    banner: data.banner ?? data.imagemUrl,
+    ...(banner !== undefined ? { banner } : {}),
     observacao: data.observacao ?? data.descricao,
     atracao: data.atracao,
     dataLimiteInscricao: data.dataLimiteInscricao,
@@ -72,7 +74,8 @@ export const eventosService = {
         tipo: data.tipo,
         local: data.local,
         preco: data.preco,
-        qrcode: data.qrcode ?? `EVT-${randomUUID()}`
+        qrcode: data.qrcode ?? `EVT-${randomUUID()}`,
+        banner: data.banner !== undefined ? data.banner : data.imagemUrl ?? null
       }
     });
   },
