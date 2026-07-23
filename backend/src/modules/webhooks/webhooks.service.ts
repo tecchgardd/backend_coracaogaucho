@@ -113,6 +113,13 @@ export async function finalizePaidOrder(input: {
       include: { pedido: { include: { items: { include: { evento: true } }, loteIngresso: true } } }
     });
     if (!payment) return;
+    if (
+      payment.status === "CANCELADO" &&
+      payment.failureReason?.startsWith("Substituido por ") &&
+      payment.pedido?.paymentStatus === "PAGO"
+    ) {
+      return;
+    }
     const paidAt = payment.paidAt ?? new Date();
     await tx.pagamento.update({
       where: { id: payment.id },

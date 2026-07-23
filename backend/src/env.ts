@@ -29,6 +29,7 @@ export const env = envSchema.parse(process.env);
 export const googleAuthEnabled = Boolean(env.GOOGLE_CLIENT_ID && env.GOOGLE_CLIENT_SECRET);
 
 export const trustedOrigins = [
+  "https://gabriel.expo.app",
   ...env.AUTH_TRUSTED_ORIGINS.split(",").map((origin) => origin.trim()).filter(Boolean),
   env.FRONTEND_URL,
   env.PRODUCTION_ORIGIN,

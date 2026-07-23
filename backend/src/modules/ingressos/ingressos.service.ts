@@ -183,19 +183,23 @@ export const ingressosService = {
 
     const evento = await prisma.evento.findUnique({ where: { id: data.eventoId } });
     if (!evento) throw new AppError("Evento ou baile não encontrado", 404);
-    if (evento.tipo === "CURSO") throw new AppError("Curso não pode gerar lote de ingressos", 400);
-    if (evento.status !== "ATIVO") throw new AppError("O evento ou baile precisa estar ativo", 409);
+    if (evento.tipo !== "BAILE") throw new AppError("Lote de ingressos é exclusivo para baile", 400);
+    if (evento.status !== "ATIVO") throw new AppError("O baile precisa estar ativo", 409);
 
     const quantidade = data.quantidade;
-    const valorUnitario = Number(data.valorUnitario ?? 0);
+    const valorUnitario = Number(evento.preco);
     const valorTotal = quantidade * valorUnitario;
 
     return prisma.$transaction(async (tx) => {
+      const eventoAtual = await tx.evento.findUnique({ where: { id: evento.id } });
+      if (!eventoAtual || eventoAtual.tipo !== "BAILE" || eventoAtual.status !== "ATIVO") {
+        throw new AppError("O baile não está disponível", 409);
+      }
       const [ingressosAvulsos, ingressosEmLotes] = await Promise.all([
         tx.ingresso.count({ where: { eventoId: evento.id, status: { notIn: ["CANCELADO", "EXPIRADO"] } } }),
         tx.ingressoAluno.count({ where: { eventoId: evento.id, status: { notIn: ["CANCELADO", "EXPIRADO"] } } })
       ]);
-      if (evento.capacidade != null && ingressosAvulsos + ingressosEmLotes + quantidade > evento.capacidade) {
+      if (eventoAtual.capacidade != null && ingressosAvulsos + ingressosEmLotes + quantidade > eventoAtual.capacidade) {
         throw new AppError("Quantidade excede a capacidade disponível do evento", 409);
       }
 
@@ -252,7 +256,13 @@ export const ingressosService = {
               valor: valorTotal,
               amount: Math.round(valorTotal * 100),
               status: "PAGO",
-              paidAt: new Date()
+              paidAt: new Date(),
+              gatewayId: `MANUAL-${randomUUID()}`,
+              rawProviderData: {
+                source: "PAINEL_ADMIN",
+                method: data.formaPagamentoExterno,
+                colaboradorId
+              }
             }
           });
         }
@@ -312,9 +322,25 @@ export const ingressosService = {
           metadata: { quantidade, valorUnitario, valorTotal, origemFinanceira: data.origemFinanceira, pedidoId }
         }
       });
+      await tx.auditLog.create({
+        data: {
+          action: pagamentoImediato ? "LOTE_VENDIDO_PAGAMENTO_EXTERNO" : "LOTE_GERADO",
+          entity: "LoteIngressoAluno",
+          entityId: String(lote.id),
+          colaboradorId,
+          metadata: {
+            quantidade,
+            valorUnitario,
+            valorTotal,
+            origemFinanceira: data.origemFinanceira,
+            pedidoId,
+            formaPagamento: data.formaPagamentoExterno
+          }
+        }
+      });
 
       return tx.loteIngressoAluno.findUniqueOrThrow({ where: { id: lote.id }, include: includeBatch() });
-    });
+    }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
   },
 
   async atualizarIngresso(id: number, data: z.infer<typeof atualizarIngressoSchema>, colaboradorId?: number) {
@@ -368,7 +394,16 @@ export const ingressosService = {
         }
       });
       if (ticketStatus) {
-        await tx.ingressoAluno.updateMany({ where: { loteId: id, tipo: "NORMAL" }, data: { status: ticketStatus } });
+        await tx.ingressoAluno.updateMany({
+          where: {
+            loteId: id,
+            tipo: "NORMAL",
+            ...(ticketStatus === "CANCELADO" || ticketStatus === "EXPIRADO"
+              ? { status: { not: "UTILIZADO" } }
+              : {})
+          },
+          data: { status: ticketStatus }
+        });
       }
       await tx.historicoPagamento.create({
         data: {

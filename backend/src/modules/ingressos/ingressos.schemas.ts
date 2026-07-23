@@ -28,10 +28,10 @@ export const gerarLoteSchema = z.object({
   quantidade: z.coerce.number().int().positive().max(1000),
   origemFinanceira: origemFinanceiraLoteSchema,
   pedidoId: z.coerce.number().int().positive().optional(),
-  valorUnitario: z.coerce.number().nonnegative().default(0),
+  valorUnitario: z.coerce.number().nonnegative().optional(),
   dataLimite: z.coerce.date().optional(),
   observacoes: z.string().trim().max(1000).optional(),
-  formaPagamentoExterno: z.enum(["PIX_EXTERNO", "DINHEIRO", "CARTAO_EXTERNO"]).optional()
+  formaPagamentoExterno: z.enum(["PIX_EXTERNO", "DINHEIRO", "CARTAO_CREDITO", "CARTAO_DEBITO"]).optional()
 }).superRefine((data, ctx) => {
   if (!data.customerId && !data.cpf) {
     ctx.addIssue({ code: "custom", path: ["customerId"], message: "Aluno é obrigatório" });

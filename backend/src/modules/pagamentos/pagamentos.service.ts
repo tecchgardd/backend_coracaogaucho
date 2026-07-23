@@ -250,9 +250,20 @@ export function buildPaymentShareText(data: { nome: string; descricao: string; v
 
 export const pagamentosService = {
   async listar(query: z.infer<typeof pagamentoQuerySchema>) {
+    const createdAt = query.dataInicio || query.dataFim
+      ? { gte: query.dataInicio, lte: query.dataFim }
+      : undefined;
     const where: Prisma.PagamentoWhereInput = {
       status: query.status,
       customerId: query.customerId,
+      cpfCustomer: query.cpf ? { contains: normalizeCpf(query.cpf), mode: "insensitive" } : undefined,
+      nomeCustomer: query.nome ? { contains: query.nome, mode: "insensitive" } : undefined,
+      pedido: {
+        code: query.codigo ? { contains: query.codigo, mode: "insensitive" } : undefined,
+        origin: query.origem,
+        items: query.item ? { some: { description: { contains: query.item, mode: "insensitive" } } } : undefined
+      },
+      createdAt,
       ...(query.search ? {
         OR: [
           { cpfCustomer: { contains: normalizeCpf(query.search), mode: "insensitive" } },
@@ -263,7 +274,18 @@ export const pagamentosService = {
       } : {})
     };
     const [data, total] = await Promise.all([
-      prisma.pagamento.findMany({ where, ...getPagination(query), include: { customer: true, evento: true, inscricao: true, pedido: true }, orderBy: { createdAt: "desc" } }),
+      prisma.pagamento.findMany({
+        where,
+        ...getPagination(query),
+        include: {
+          customer: true,
+          evento: true,
+          inscricao: true,
+          pedido: { include: { items: true, loteIngresso: true } },
+          refunds: { orderBy: { createdAt: "desc" } }
+        },
+        orderBy: { createdAt: "desc" }
+      }),
       prisma.pagamento.count({ where })
     ]);
     return { data, total, page: query.page, limit: query.limit };
@@ -412,6 +434,13 @@ export const pagamentosService = {
       const session = await stripe.checkout.sessions.retrieve(payment.stripeCheckoutSessionId);
       if (session.payment_status === "paid") throw paymentError("ORDER_ALREADY_PAID", "A Stripe ja confirmou este pagamento", 409);
       if (session.status === "open") await stripe.checkout.sessions.expire(session.id);
+    }
+    if (payment.stripePaymentIntentId) {
+      const intent = await stripe.paymentIntents.retrieve(payment.stripePaymentIntentId);
+      if (intent.status === "succeeded") throw paymentError("ORDER_ALREADY_PAID", "A Stripe ja confirmou este pagamento", 409);
+      if (["requires_payment_method", "requires_confirmation", "requires_action", "requires_capture", "processing"].includes(intent.status)) {
+        await stripe.paymentIntents.cancel(intent.id);
+      }
     }
     const amount = data.amount ?? payment.amount;
     if (amount !== payment.amount) throw paymentError("INVALID_PAYMENT_AMOUNT", "A baixa parcial ainda nao e suportada", 422);

@@ -4,7 +4,14 @@ import { isValidCpf } from "../customer-auth/customer-auth.schemas.js";
 
 export const pagamentoQuerySchema = paginationQuerySchema.extend({
   status: z.enum(["PENDENTE", "PROCESSANDO", "PAGO", "FALHOU", "CANCELADO", "EXPIRADO", "ESTORNADO", "PARCIALMENTE_ESTORNADO", "CONTESTADO", "CONTESTACAO_PERDIDA"]).optional(),
-  customerId: z.coerce.number().int().positive().optional()
+  customerId: z.coerce.number().int().positive().optional(),
+  cpf: z.string().optional(),
+  nome: z.string().optional(),
+  codigo: z.string().optional(),
+  item: z.string().optional(),
+  origem: z.enum(["SITE", "WHATSAPP", "PAINEL_ADMIN"]).optional(),
+  dataInicio: z.coerce.date().optional(),
+  dataFim: z.coerce.date().optional()
 });
 
 const cartItemSchema = z.object({

@@ -139,6 +139,13 @@ export const vendasService = {
     if (!evento) throw new AppError("Evento/curso não encontrado", 404);
 
     if (evento.tipo !== data.tipo) throw new AppError("O item selecionado nao corresponde ao tipo da venda", 409);
+    if (evento.status !== "ATIVO") throw new AppError("O item selecionado precisa estar ativo", 409);
+    if (data.tipo === "CURSO" && data.quantidade !== 1) {
+      throw new AppError("Venda de curso aceita exatamente uma inscricao por aluno", 422);
+    }
+    if (inscricao && (inscricao.customerId !== customerId || inscricao.eventoId !== eventId)) {
+      throw new AppError("A inscricao nao pertence ao aluno e curso informados", 409);
+    }
     const desconto = data.desconto ?? 0;
     const unitPrice = Number(evento.preco);
     const grossTotal = data.quantidade * unitPrice;
@@ -147,7 +154,27 @@ export const vendasService = {
     const external = ["PIX_EXTERNO", "DINHEIRO", "CARTAO_CREDITO", "CARTAO_DEBITO"].includes(data.formaPagamento ?? "");
     const statusVenda = data.formaPagamento === "CORTESIA" ? "CORTESIA" : external ? "PAGO" : "PENDENTE";
 
-    const pedido = await prisma.pedido.create({
+    return prisma.$transaction(async (tx) => {
+      const eventoAtual = await tx.evento.findUnique({ where: { id: eventId } });
+      if (!eventoAtual || eventoAtual.status !== "ATIVO" || eventoAtual.tipo !== data.tipo) {
+        throw new AppError("O item selecionado nao esta disponivel", 409);
+      }
+      if (data.tipo !== "CURSO" && eventoAtual.capacidade != null) {
+        const reservados = await tx.pedidoItem.aggregate({
+          where: {
+            eventId,
+            order: {
+              status: { notIn: ["CANCELADO", "EXPIRADO", "FALHOU"] },
+              paymentStatus: { in: ["PENDENTE", "PROCESSANDO", "PAGO"] }
+            }
+          },
+          _sum: { quantity: true }
+        });
+        if ((reservados._sum.quantity ?? 0) + data.quantidade > eventoAtual.capacidade) {
+          throw new AppError("Quantidade excede a capacidade disponivel", 409);
+        }
+      }
+      const pedido = await tx.pedido.create({
       data: {
         code: saleCode(),
         type: mapTipo(data.tipo),
@@ -181,14 +208,16 @@ export const vendasService = {
       },
       include: includeVenda()
     });
-    if (data.tipo === "CURSO") {
-      await prisma.inscricao.upsert({
+      let inscricaoVendaId: number | undefined;
+      if (data.tipo === "CURSO") {
+        const inscricaoVenda = await tx.inscricao.upsert({
         where: { customerId_eventoId: { customerId, eventoId: eventId } },
-        update: { status: statusVenda === "PAGO" || statusVenda === "CORTESIA" ? "CONFIRMADA" : "PENDENTE" },
-        create: { customerId, eventoId: eventId, status: statusVenda === "PAGO" || statusVenda === "CORTESIA" ? "CONFIRMADA" : "PENDENTE" }
-      });
-    } else {
-      await prisma.ingresso.createMany({
+          update: { orderId: pedido.id, status: statusVenda === "PAGO" || statusVenda === "CORTESIA" ? "CONFIRMADA" : "PENDENTE" },
+          create: { customerId, eventoId: eventId, orderId: pedido.id, status: statusVenda === "PAGO" || statusVenda === "CORTESIA" ? "CONFIRMADA" : "PENDENTE" }
+        });
+        inscricaoVendaId = inscricaoVenda.id;
+      } else {
+        await tx.ingresso.createMany({
         data: Array.from({ length: data.quantidade }, (_, index) => ({
           customerId,
           eventoId: eventId,
@@ -200,11 +229,20 @@ export const vendasService = {
           paidAt: statusVenda === "PAGO" || statusVenda === "CORTESIA" ? new Date() : undefined
         }))
       });
-    }
-    if (external) {
-      await prisma.pagamento.create({ data: { pedidoId: pedido.id, customerId, eventoId: eventId, nomeCustomer: person.data.nome, cpfCustomer: person.data.cpf ?? normalizeCpf(data.cpf), valor: total, amount: Math.round(total * 100), status: "PAGO", paidAt: new Date(), gatewayId: `MANUAL-${randomUUID()}`, rawProviderData: { source: "PAINEL_ADMIN", method: data.formaPagamento } } });
-    }
-    return toVenda(await prisma.pedido.findUniqueOrThrow({ where: { id: pedido.id }, include: includeVenda() }));
+      }
+      if (external) {
+        await tx.pagamento.create({ data: { inscricaoId: inscricaoVendaId, pedidoId: pedido.id, customerId, eventoId: eventId, nomeCustomer: person.data.nome, cpfCustomer: person.data.cpf ?? normalizeCpf(data.cpf), valor: total, amount: Math.round(total * 100), status: "PAGO", paidAt: new Date(), gatewayId: `MANUAL-${randomUUID()}`, rawProviderData: { source: "PAINEL_ADMIN", method: data.formaPagamento } } });
+      }
+      await tx.auditLog.create({
+        data: {
+          action: external ? "VENDA_PAGAMENTO_EXTERNO" : "VENDA_CRIADA",
+          entity: "Pedido",
+          entityId: String(pedido.id),
+          metadata: { tipo: data.tipo, customerId, eventId, quantidade: data.quantidade, unitPrice, desconto, total, formaPagamento: data.formaPagamento }
+        }
+      });
+      return toVenda(await tx.pedido.findUniqueOrThrow({ where: { id: pedido.id }, include: includeVenda() }));
+    }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
   },
 
   async atualizar(id: number, data: VendaUpdate) {
@@ -213,15 +251,15 @@ export const vendasService = {
     const metadata = atual.notes ? tryParseJson(atual.notes) : {};
     const item = atual.items[0];
     const quantity = data.quantidade ?? item?.quantity ?? 1;
-    const unitPrice = data.valorUnitario ?? Number(item?.unitPrice ?? atual.total);
+    const unitPrice = Number(atual.evento?.preco ?? item?.unitPrice ?? atual.total);
     const desconto = data.desconto ?? Number(metadata.desconto ?? 0);
-    const total = data.quantidade || data.valorUnitario || data.desconto
+    const total = data.quantidade || data.desconto
       ? Math.max(0, quantity * unitPrice - desconto)
       : Number(atual.total);
     const statusVenda = data.status ?? String(metadata.statusVenda ?? atual.paymentStatus ?? atual.status);
 
     const pedido = await prisma.$transaction(async (tx) => {
-      if (item && (data.quantidade || data.valorUnitario || data.desconto)) {
+      if (item && (data.quantidade || data.desconto)) {
         await tx.pedidoItem.update({ where: { id: item.id }, data: { quantity, unitPrice, total } });
       }
       return tx.pedido.update({

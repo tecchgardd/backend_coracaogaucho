@@ -61,6 +61,9 @@ export const scannerService = {
       if (ingresso.status === "VALIDADO" || ingresso.validadoEm) {
         return { status: "JA_UTILIZADO" satisfies ScannerStatus, ingresso };
       }
+      if (!["PAGO", "CORTESIA"].includes(ingresso.status) || ingresso.paymentStatus === "PENDENTE") {
+        return { status: "CANCELADO" satisfies ScannerStatus, ingresso };
+      }
 
       const now = new Date();
       const eventoExpirado =

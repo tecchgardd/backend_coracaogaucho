@@ -20,7 +20,7 @@ export const vendaCreateSchema = z.object({
   cursoId: z.coerce.number().int().positive().optional(),
   inscricaoId: z.coerce.number().int().positive().optional(),
   quantidade: z.coerce.number().int().positive(),
-  valorUnitario: z.coerce.number().nonnegative(),
+  valorUnitario: z.coerce.number().nonnegative().optional(),
   desconto: z.coerce.number().nonnegative().default(0),
   formaPagamento: formaPagamentoSchema,
   observacao: z.string().optional()
@@ -38,6 +38,5 @@ export const vendaUpdateSchema = z.object({
   formaPagamento: formaPagamentoSchema,
   observacao: z.string().optional(),
   quantidade: z.coerce.number().int().positive().optional(),
-  valorUnitario: z.coerce.number().nonnegative().optional(),
   desconto: z.coerce.number().nonnegative().optional()
 });

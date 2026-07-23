@@ -45,3 +45,16 @@ test("venda existente exige a venda e pagamento externo exige sua forma", () => 
     formaPagamentoExterno: "PIX_EXTERNO"
   }).success, true);
 });
+
+test("lote aceita todas as formas externas suportadas e nao exige preco do cliente", () => {
+  for (const formaPagamentoExterno of ["PIX_EXTERNO", "DINHEIRO", "CARTAO_CREDITO", "CARTAO_DEBITO"]) {
+    const parsed = gerarLoteSchema.parse({
+      customerId: 10,
+      eventoId: 20,
+      quantidade: 2,
+      origemFinanceira: "PAGAMENTO_EXTERNO",
+      formaPagamentoExterno
+    });
+    assert.equal(parsed.valorUnitario, undefined);
+  }
+});
