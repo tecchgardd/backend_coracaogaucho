@@ -138,10 +138,14 @@ export const vendasService = {
     const evento = await prisma.evento.findUnique({ where: { id: eventId } });
     if (!evento) throw new AppError("Evento/curso não encontrado", 404);
 
+    if (evento.tipo !== data.tipo) throw new AppError("O item selecionado nao corresponde ao tipo da venda", 409);
     const desconto = data.desconto ?? 0;
-    const grossTotal = data.quantidade * data.valorUnitario;
+    const unitPrice = Number(evento.preco);
+    const grossTotal = data.quantidade * unitPrice;
+    if (desconto > grossTotal) throw new AppError("O desconto nao pode superar o subtotal", 422);
     const total = Math.max(0, grossTotal - desconto);
-    const statusVenda = data.formaPagamento === "CORTESIA" ? "CORTESIA" : "PENDENTE";
+    const external = ["PIX_EXTERNO", "DINHEIRO", "CARTAO_CREDITO", "CARTAO_DEBITO"].includes(data.formaPagamento ?? "");
+    const statusVenda = data.formaPagamento === "CORTESIA" ? "CORTESIA" : external ? "PAGO" : "PENDENTE";
 
     const pedido = await prisma.pedido.create({
       data: {
@@ -168,16 +172,39 @@ export const vendasService = {
             eventId,
             description: `${eventLabel(data.tipo)} - ${evento.nome}`,
             quantity: data.quantidade,
-            unitPrice: data.valorUnitario,
+            unitPrice,
             total,
-            unitAmount: Math.round(data.valorUnitario * 100),
+            unitAmount: Math.round(unitPrice * 100),
             totalAmount: Math.round(total * 100)
           }]
         }
       },
       include: includeVenda()
     });
-    return toVenda(pedido);
+    if (data.tipo === "CURSO") {
+      await prisma.inscricao.upsert({
+        where: { customerId_eventoId: { customerId, eventoId: eventId } },
+        update: { status: statusVenda === "PAGO" || statusVenda === "CORTESIA" ? "CONFIRMADA" : "PENDENTE" },
+        create: { customerId, eventoId: eventId, status: statusVenda === "PAGO" || statusVenda === "CORTESIA" ? "CONFIRMADA" : "PENDENTE" }
+      });
+    } else {
+      await prisma.ingresso.createMany({
+        data: Array.from({ length: data.quantidade }, (_, index) => ({
+          customerId,
+          eventoId: eventId,
+          orderId: pedido.id,
+          preco: unitPrice,
+          qrcode: `TKT-${pedido.id}-${eventId}-${index + 1}`,
+          status: statusVenda === "PAGO" || statusVenda === "CORTESIA" ? "PAGO" : "PENDENTE",
+          paymentStatus: statusVenda === "PAGO" || statusVenda === "CORTESIA" ? "PAGO" : "PENDENTE",
+          paidAt: statusVenda === "PAGO" || statusVenda === "CORTESIA" ? new Date() : undefined
+        }))
+      });
+    }
+    if (external) {
+      await prisma.pagamento.create({ data: { pedidoId: pedido.id, customerId, eventoId: eventId, nomeCustomer: person.data.nome, cpfCustomer: person.data.cpf ?? normalizeCpf(data.cpf), valor: total, amount: Math.round(total * 100), status: "PAGO", paidAt: new Date(), gatewayId: `MANUAL-${randomUUID()}`, rawProviderData: { source: "PAINEL_ADMIN", method: data.formaPagamento } } });
+    }
+    return toVenda(await prisma.pedido.findUniqueOrThrow({ where: { id: pedido.id }, include: includeVenda() }));
   },
 
   async atualizar(id: number, data: VendaUpdate) {

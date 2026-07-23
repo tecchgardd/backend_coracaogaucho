@@ -3,7 +3,7 @@ import { paginationQuerySchema } from "../common/schemas.js";
 
 export const vendaTipoSchema = z.enum(["EVENTO", "BAILE", "CURSO"]);
 export const vendaStatusSchema = z.enum(["PENDENTE", "PAGO", "CANCELADO", "CORTESIA"]);
-export const formaPagamentoSchema = z.enum(["PIX", "DINHEIRO", "CARTAO", "CORTESIA"]).optional();
+export const formaPagamentoSchema = z.enum(["LINK_PAGAMENTO", "PIX_EXTERNO", "DINHEIRO", "CARTAO_CREDITO", "CARTAO_DEBITO", "CORTESIA"]).optional();
 
 export const vendaQuerySchema = paginationQuerySchema.extend({
   cpf: z.string().optional(),
@@ -41,4 +41,3 @@ export const vendaUpdateSchema = z.object({
   valorUnitario: z.coerce.number().nonnegative().optional(),
   desconto: z.coerce.number().nonnegative().optional()
 });
-
