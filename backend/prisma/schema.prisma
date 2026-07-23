@@ -9,9 +9,9 @@ datasource db {
 }
 
 model Customer {
-  id             Int          @id @default(autoincrement())
+  id             Int                 @id @default(autoincrement())
   nome           String
-  cpf            String       @unique
+  cpf            String              @unique
   telefone       String
   email          String?
   cep            String?
@@ -21,17 +21,18 @@ model Customer {
   bairro         String?
   cidade         String?
   estado         String?
-  dataNascimento DateTime?    @db.Date
+  dataNascimento DateTime?           @db.Date
   sexo           String?
-  createdAt      DateTime     @default(now()) @db.Timestamp(6)
-  updatedAt      DateTime     @default(now()) @db.Timestamp(6)
+  createdAt      DateTime            @default(now()) @db.Timestamp(6)
+  updatedAt      DateTime            @default(now()) @db.Timestamp(6)
   ingresso       Ingresso[]
   inscricao      Inscricao[]
   pagamento      Pagamento[]
   colaborador    Colaborador?
   pedidos        Pedido[]
-  userId         String?      @unique
-  user           User?        @relation(fields: [userId], references: [id], onDelete: SetNull)
+  lotesIngressos LoteIngressoAluno[]
+  userId         String?             @unique
+  user           User?               @relation(fields: [userId], references: [id], onDelete: SetNull)
 
   @@index([cpf], map: "idx_customer_cpf")
   @@index([telefone], map: "idx_customer_telefone")
@@ -39,30 +40,31 @@ model Customer {
 }
 
 model Evento {
-  id                   Int          @id @default(autoincrement())
+  id                   Int                 @id @default(autoincrement())
   nome                 String
   tipo                 TipoEvento
   local                String
   cidade               String?
-  data                 DateTime     @db.Timestamp(6)
+  data                 DateTime            @db.Timestamp(6)
   preco                Float
   capacidade           Int?
-  qrcode               String       @unique
-  status               EventoStatus @default(ATIVO)
-  createdAt            DateTime     @default(now()) @db.Timestamp(6)
-  updatedAt            DateTime     @default(now()) @db.Timestamp(6)
+  qrcode               String              @unique
+  status               EventoStatus        @default(ATIVO)
+  createdAt            DateTime            @default(now()) @db.Timestamp(6)
+  updatedAt            DateTime            @default(now()) @db.Timestamp(6)
   banner               String?
   observacao           String?
   atracao              String?
-  dataLimiteInscricao  DateTime?    @db.Timestamp(6)
+  dataLimiteInscricao  DateTime?           @db.Timestamp(6)
   precoAntecipado      Float?
-  dataLimiteAntecipado DateTime?    @db.Timestamp(6)
+  dataLimiteAntecipado DateTime?           @db.Timestamp(6)
   cortesia             Cortesia[]
   ingresso             Ingresso[]
   inscricao            Inscricao[]
   pagamento            Pagamento[]
   pedidos              Pedido[]
   pedidoItems          PedidoItem[]
+  lotesIngressos       LoteIngressoAluno[]
 
   @@index([cidade], map: "idx_evento_cidade")
   @@index([data], map: "idx_evento_data")
@@ -279,20 +281,21 @@ model Verification {
 }
 
 model Colaborador {
-  id         Int        @id @default(autoincrement())
-  nome       String
-  cpf        String     @unique
-  email      String     @unique
-  role       UserRole   @default(STAFF)
-  status     String     @default("ATIVO")
-  userId     String     @unique
-  customerId Int?       @unique
-  createdAt  DateTime   @default(now()) @db.Timestamp(6)
-  updatedAt  DateTime   @updatedAt @db.Timestamp(6)
-  user       User       @relation(fields: [userId], references: [id], onDelete: Restrict)
-  customer   Customer?  @relation(fields: [customerId], references: [id], onDelete: SetNull, onUpdate: NoAction)
-  auditLogs  AuditLog[]
-  validacoes Ingresso[]
+  id                       Int             @id @default(autoincrement())
+  nome                     String
+  cpf                      String          @unique
+  email                    String          @unique
+  role                     UserRole        @default(STAFF)
+  status                   String          @default("ATIVO")
+  userId                   String          @unique
+  customerId               Int?            @unique
+  createdAt                DateTime        @default(now()) @db.Timestamp(6)
+  updatedAt                DateTime        @updatedAt @db.Timestamp(6)
+  user                     User            @relation(fields: [userId], references: [id], onDelete: Restrict)
+  customer                 Customer?       @relation(fields: [customerId], references: [id], onDelete: SetNull, onUpdate: NoAction)
+  auditLogs                AuditLog[]
+  validacoes               Ingresso[]
+  validacoesIngressosAluno IngressoAluno[]
 
   @@index([role])
   @@index([status])
@@ -316,7 +319,7 @@ model AuditLog {
 
 model LoteIngressoAluno {
   id                 Int                    @id @default(autoincrement())
-  inscricaoId        Int                    @unique
+  inscricaoId        Int?                   @unique
   customerId         Int
   eventoId           Int
   quantidade         Int
@@ -332,10 +335,14 @@ model LoteIngressoAluno {
   notificationStatus String                 @default("PENDENTE")
   createdById        Int?
   notes              String?
+  origemFinanceira   String                 @default("LEGADO_CURSO")
+  statusOperacional  String                 @default("ATIVO")
   createdAt          DateTime               @default(now()) @db.Timestamp(6)
   updatedAt          DateTime               @updatedAt @db.Timestamp(6)
   pedidoId           Int?                   @unique
-  inscricao          Inscricao              @relation(fields: [inscricaoId], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  inscricao          Inscricao?             @relation(fields: [inscricaoId], references: [id], onDelete: SetNull, onUpdate: NoAction)
+  customer           Customer               @relation(fields: [customerId], references: [id], onDelete: Restrict, onUpdate: NoAction)
+  evento             Evento                 @relation(fields: [eventoId], references: [id], onDelete: Restrict, onUpdate: NoAction)
   pedido             Pedido?                @relation(fields: [pedidoId], references: [id], onDelete: SetNull, onUpdate: NoAction)
   tickets            IngressoAluno[]
   historico          HistoricoPagamento[]
@@ -351,7 +358,7 @@ model LoteIngressoAluno {
 model IngressoAluno {
   id                  Int                 @id @default(autoincrement())
   loteId              Int
-  inscricaoId         Int
+  inscricaoId         Int?
   customerId          Int
   eventoId            Int
   codigo              String              @unique
@@ -368,10 +375,13 @@ model IngressoAluno {
   courtesyReason      String?
   courtesyResponsible String?
   courtesyDate        DateTime?           @db.Timestamp(6)
+  utilizadoEm         DateTime?           @db.Timestamp(6)
+  validadoPorId       Int?
   notes               String?
   createdAt           DateTime            @default(now()) @db.Timestamp(6)
   updatedAt           DateTime            @updatedAt @db.Timestamp(6)
   lote                LoteIngressoAluno   @relation(fields: [loteId], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  validadoPor         Colaborador?        @relation(fields: [validadoPorId], references: [id], onDelete: SetNull)
 
   @@index([loteId], map: "idx_ingresso_aluno_lote")
   @@index([inscricaoId], map: "idx_ingresso_aluno_inscricao")
@@ -379,6 +389,7 @@ model IngressoAluno {
   @@index([eventoId], map: "idx_ingresso_aluno_evento")
   @@index([status], map: "idx_ingresso_aluno_status")
   @@index([tipo], map: "idx_ingresso_aluno_tipo")
+  @@index([validadoPorId], map: "idx_ingresso_aluno_validado_por")
   @@map("ingresso_aluno")
 }
 

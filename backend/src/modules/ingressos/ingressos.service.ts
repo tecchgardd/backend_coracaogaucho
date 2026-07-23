@@ -7,10 +7,10 @@ import { prisma } from "../../lib/prisma.js";
 import { AppError } from "../../utils/http.js";
 import { getPagination } from "../common/schemas.js";
 import { buildPaymentShareText, pagamentosService } from "../pagamentos/pagamentos.service.js";
+import { normalizeCpf } from "../pessoas/pessoas.service.js";
 import type { z } from "zod";
 import type { atualizarIngressoSchema, atualizarLoteSchema, gerarLoteSchema, ingressoQuerySchema, loteIngressoQuerySchema, registrarPagamentoSchema } from "./ingressos.schemas.js";
 
-const INGRESSOS_POR_PARTICIPANTE = 10;
 const COMPROVANTES_MIMES = new Set(["application/pdf", "image/png", "image/jpeg", "image/webp"]);
 
 function ticketCode() {
@@ -20,6 +20,8 @@ function ticketCode() {
 function includeBatch() {
   return {
     inscricao: { include: { customer: true, evento: true } },
+    customer: true,
+    evento: true,
     tickets: { orderBy: { id: "asc" } },
     historico: { orderBy: { createdAt: "desc" } },
     comprovantes: { orderBy: { createdAt: "desc" } }
@@ -28,12 +30,8 @@ function includeBatch() {
 
 function includeTicket() {
   return {
-    lote: { include: { inscricao: { include: { customer: true, evento: true } } } }
+    lote: { include: { inscricao: { include: { customer: true, evento: true } }, customer: true, evento: true } }
   } satisfies Prisma.IngressoAlunoInclude;
-}
-
-function getPixPayload(loteId: number) {
-  return `PIX-PENDENTE-CORACAO-GAUCHO-LOTE-${loteId}`;
 }
 
 function tryParseJson(value?: string | null) {
@@ -85,7 +83,7 @@ export const ingressosService = {
       cidade: query.cidade ? { contains: query.cidade, mode: "insensitive" } : undefined,
       professor: query.professor ? { contains: query.professor, mode: "insensitive" } : undefined,
       ...(query.cpf
-        ? { lote: { inscricao: { customer: { cpf: { contains: query.cpf, mode: "insensitive" } } } } }
+        ? { lote: { customer: { cpf: { contains: query.cpf, mode: "insensitive" } } } }
         : {}),
       ...(query.search
         ? {
@@ -112,20 +110,18 @@ export const ingressosService = {
   async listarLotes(query: z.infer<typeof loteIngressoQuerySchema>) {
     const and: Prisma.LoteIngressoAlunoWhereInput[] = [];
     if (query.cpf) {
-      and.push({ inscricao: { customer: { cpf: { contains: query.cpf, mode: "insensitive" } } } });
+      and.push({ customer: { cpf: { contains: query.cpf, mode: "insensitive" } } });
     }
     if (query.cidade) {
-      and.push({ inscricao: { evento: { cidade: { contains: query.cidade, mode: "insensitive" } } } });
+      and.push({ evento: { cidade: { contains: query.cidade, mode: "insensitive" } } });
     }
     if (query.professor) {
       and.push({
-        inscricao: {
-          evento: {
-            OR: [
-              { atracao: { contains: query.professor, mode: "insensitive" } },
-              { observacao: { contains: query.professor, mode: "insensitive" } }
-            ]
-          }
+        evento: {
+          OR: [
+            { atracao: { contains: query.professor, mode: "insensitive" } },
+            { observacao: { contains: query.professor, mode: "insensitive" } }
+          ]
         }
       });
     }
@@ -133,9 +129,9 @@ export const ingressosService = {
       and.push({
         OR: [
           { id: Number.isNaN(Number(query.search)) ? undefined : Number(query.search) },
-          { inscricao: { customer: { nome: { contains: query.search, mode: "insensitive" } } } },
-          { inscricao: { customer: { cpf: { contains: query.search, mode: "insensitive" } } } },
-          { inscricao: { evento: { nome: { contains: query.search, mode: "insensitive" } } } }
+          { customer: { nome: { contains: query.search, mode: "insensitive" } } },
+          { customer: { cpf: { contains: query.search, mode: "insensitive" } } },
+          { evento: { nome: { contains: query.search, mode: "insensitive" } } }
         ].filter(Boolean) as Prisma.LoteIngressoAlunoWhereInput[]
       });
     }
@@ -180,29 +176,103 @@ export const ingressosService = {
   },
 
   async gerarLote(data: z.infer<typeof gerarLoteSchema>, colaboradorId?: number) {
-    const inscricao = await this.buscarInscricaoPorCpf(data.cpf);
-    if (inscricao.lotesIngressos.length) {
-      throw new AppError("Esta inscricao ja possui lote de ingressos gerado", 409);
-    }
+    const customer = data.customerId
+      ? await prisma.customer.findUnique({ where: { id: data.customerId } })
+      : await prisma.customer.findUnique({ where: { cpf: normalizeCpf(data.cpf ?? "") } });
+    if (!customer) throw new AppError("Aluno não encontrado", 404);
 
-    const participantes = Math.max(1, inscricao.quantidadeParticipantes ?? 1);
-    const quantidade = participantes * INGRESSOS_POR_PARTICIPANTE;
+    const evento = await prisma.evento.findUnique({ where: { id: data.eventoId } });
+    if (!evento) throw new AppError("Evento ou baile não encontrado", 404);
+    if (evento.tipo === "CURSO") throw new AppError("Curso não pode gerar lote de ingressos", 400);
+    if (evento.status !== "ATIVO") throw new AppError("O evento ou baile precisa estar ativo", 409);
+
+    const quantidade = data.quantidade;
     const valorUnitario = Number(data.valorUnitario ?? 0);
     const valorTotal = quantidade * valorUnitario;
 
     return prisma.$transaction(async (tx) => {
+      const [ingressosAvulsos, ingressosEmLotes] = await Promise.all([
+        tx.ingresso.count({ where: { eventoId: evento.id, status: { notIn: ["CANCELADO", "EXPIRADO"] } } }),
+        tx.ingressoAluno.count({ where: { eventoId: evento.id, status: { notIn: ["CANCELADO", "EXPIRADO"] } } })
+      ]);
+      if (evento.capacidade != null && ingressosAvulsos + ingressosEmLotes + quantidade > evento.capacidade) {
+        throw new AppError("Quantidade excede a capacidade disponível do evento", 409);
+      }
+
+      let pedidoId = data.pedidoId;
+      if (pedidoId) {
+        const pedido = await tx.pedido.findFirst({
+          where: { id: pedidoId, type: "EVENT", customerId: customer.id, eventId: evento.id }
+        });
+        if (!pedido) throw new AppError("Venda incompatível com o aluno ou evento selecionado", 409);
+        const loteExistente = await tx.loteIngressoAluno.findUnique({ where: { pedidoId } });
+        if (loteExistente) throw new AppError("A venda já está vinculada a outro lote", 409);
+      }
+
+      const pagamentoImediato = data.origemFinanceira === "PAGAMENTO_EXTERNO";
+      const cortesia = data.origemFinanceira === "CORTESIA";
+      if (data.origemFinanceira === "NOVA_VENDA" || pagamentoImediato) {
+        const statusFinanceiro = pagamentoImediato ? "PAGO" : "PENDENTE";
+        const pedido = await tx.pedido.create({
+          data: {
+            code: `VEN-${randomUUID().replace(/-/g, "").slice(0, 10).toUpperCase()}`,
+            type: "EVENT",
+            customerId: customer.id,
+            eventId: evento.id,
+            status: statusFinanceiro,
+            paymentStatus: statusFinanceiro,
+            paymentMethod: pagamentoImediato ? data.formaPagamentoExterno : "LINK_PAGAMENTO",
+            total: valorTotal,
+            totalAmount: Math.round(valorTotal * 100),
+            origin: "PAINEL_ADMIN",
+            notes: JSON.stringify({ tipoVenda: evento.tipo, source: "LOTE_INGRESSO", observacao: data.observacoes }),
+            items: {
+              create: [{
+                eventId: evento.id,
+                description: `Lote de ingressos - ${evento.nome}`,
+                quantity: quantidade,
+                unitPrice: valorUnitario,
+                total: valorTotal,
+                unitAmount: Math.round(valorUnitario * 100),
+                totalAmount: Math.round(valorTotal * 100)
+              }]
+            }
+          }
+        });
+        pedidoId = pedido.id;
+
+        if (pagamentoImediato) {
+          await tx.pagamento.create({
+            data: {
+              pedidoId: pedido.id,
+              customerId: customer.id,
+              eventoId: evento.id,
+              nomeCustomer: customer.nome,
+              cpfCustomer: customer.cpf,
+              valor: valorTotal,
+              amount: Math.round(valorTotal * 100),
+              status: "PAGO",
+              paidAt: new Date()
+            }
+          });
+        }
+      }
+
+      const paymentStatus = pagamentoImediato || cortesia || data.origemFinanceira === "SEM_COBRANCA" ? "PAGO" : "PENDENTE";
+      const ticketStatus = cortesia ? "CORTESIA" : paymentStatus;
       const lote = await tx.loteIngressoAluno.create({
         data: {
-          inscricaoId: inscricao.id,
-          customerId: inscricao.customerId,
-          eventoId: inscricao.eventoId,
+          customerId: customer.id,
+          eventoId: evento.id,
           quantidade,
           valorUnitario,
-          valorTotal,
+          valorTotal: cortesia || data.origemFinanceira === "SEM_COBRANCA" ? 0 : valorTotal,
+          status: paymentStatus,
+          paymentStatus,
+          origemFinanceira: data.origemFinanceira,
+          statusOperacional: "ATIVO",
           dueDate: data.dataLimite,
-          paymentUrl: `PENDENTE_GATEWAY_LOTE_${inscricao.id}`,
-          boletoUrl: `PENDENTE_BOLETO_LOTE_${inscricao.id}`,
-          pixQrCode: getPixPayload(inscricao.id),
+          pedidoId,
           createdById: colaboradorId,
           notes: data.observacoes
         }
@@ -213,19 +283,21 @@ export const ingressosService = {
           const codigo = ticketCode();
           return {
             loteId: lote.id,
-            inscricaoId: inscricao.id,
-            customerId: inscricao.customerId,
-            eventoId: inscricao.eventoId,
+            customerId: customer.id,
+            eventoId: evento.id,
             codigo,
             qrcode: `CGQR:${codigo}`,
-            status: "PENDENTE",
-            tipo: "NORMAL",
-            valor: valorUnitario,
+            status: ticketStatus,
+            tipo: cortesia ? "CORTESIA" : "NORMAL",
+            valor: cortesia ? 0 : valorUnitario,
             dueDate: data.dataLimite,
-            alunoNome: inscricao.customer.nome,
-            cursoNome: inscricao.evento.nome,
-            cidade: inscricao.evento.cidade,
-            professor: inscricao.evento.atracao ?? inscricao.evento.observacao
+            alunoNome: customer.nome,
+            cursoNome: evento.nome,
+            cidade: evento.cidade,
+            professor: evento.atracao ?? evento.observacao,
+            courtesyReason: cortesia ? data.observacoes : undefined,
+            courtesyResponsible: cortesia ? String(colaboradorId ?? "ADMIN") : undefined,
+            courtesyDate: cortesia ? new Date() : undefined
           };
         })
       });
@@ -234,10 +306,10 @@ export const ingressosService = {
         data: {
           loteId: lote.id,
           action: "LOTE_GERADO",
-          toStatus: "PENDENTE",
+          toStatus: paymentStatus,
           reason: data.observacoes,
           colaboradorId,
-          metadata: { quantidade, participantes, valorUnitario, valorTotal }
+          metadata: { quantidade, valorUnitario, valorTotal, origemFinanceira: data.origemFinanceira, pedidoId }
         }
       });
 
@@ -326,7 +398,7 @@ export const ingressosService = {
     if (lote.paymentStatus === "PAGO") throw new AppError("Lote ja esta pago", 400);
     if (Number(lote.valorTotal) <= 0) throw new AppError("Lote sem valor para cobranca", 400);
 
-    const descricao = `Lote ${lote.id} - ${lote.inscricao.evento.nome}`;
+    const descricao = `Lote ${lote.id} - ${lote.evento.nome}`;
     let pedidoId = lote.pedidoId;
     if (!pedidoId) {
       const totalAmount = Math.round(Number(lote.valorTotal) * 100);
@@ -380,7 +452,7 @@ export const ingressosService = {
       pagamento,
       checkoutUrl,
       shareText: buildPaymentShareText({
-        nome: lote.inscricao.customer.nome,
+        nome: lote.customer.nome,
         descricao,
         valor: Number(lote.valorTotal),
         checkoutUrl

@@ -14,7 +14,49 @@ export const scannerService = {
         include: { evento: true, customer: true }
       });
 
-      if (!ingresso) return { status: "NAO_ENCONTRADO" satisfies ScannerStatus };
+      if (!ingresso) {
+        const ingressoLote = await tx.ingressoAluno.findFirst({
+          where: { OR: [{ qrcode: codigo }, { codigo }] },
+          include: { lote: { include: { evento: true, customer: true } }, validadoPor: true }
+        });
+        if (!ingressoLote) return { status: "NAO_ENCONTRADO" satisfies ScannerStatus };
+        if (ingressoLote.status === "CANCELADO") return { status: "CANCELADO" satisfies ScannerStatus, ingresso: ingressoLote };
+        if (ingressoLote.status === "UTILIZADO" || ingressoLote.utilizadoEm) {
+          return { status: "JA_UTILIZADO" satisfies ScannerStatus, ingresso: ingressoLote };
+        }
+
+        const now = new Date();
+        const evento = ingressoLote.lote.evento;
+        if (evento.status === "ENCERRADO" || evento.status === "CANCELADO" || evento.data < now) {
+          return { status: "EVENTO_EXPIRADO" satisfies ScannerStatus, ingresso: ingressoLote };
+        }
+        if (!["PAGO", "CORTESIA"].includes(ingressoLote.status)) {
+          return { status: "CANCELADO" satisfies ScannerStatus, ingresso: ingressoLote };
+        }
+
+        const atualizado = await tx.ingressoAluno.update({
+          where: { id: ingressoLote.id },
+          data: { status: "UTILIZADO", utilizadoEm: now, validadoPorId: colaboradorId },
+          include: { lote: { include: { evento: true, customer: true } }, validadoPor: true }
+        });
+        const disponiveis = await tx.ingressoAluno.count({
+          where: { loteId: ingressoLote.loteId, status: { in: ["PAGO", "CORTESIA"] } }
+        });
+        await tx.loteIngressoAluno.update({
+          where: { id: ingressoLote.loteId },
+          data: { statusOperacional: disponiveis === 0 ? "ESGOTADO" : "PARCIALMENTE_UTILIZADO" }
+        });
+        await tx.auditLog.create({
+          data: {
+            action: "SCANNER_VALIDAR",
+            entity: "ingresso_aluno",
+            entityId: String(ingressoLote.id),
+            colaboradorId,
+            metadata: { codigo, loteId: ingressoLote.loteId, status: "VALIDO" }
+          }
+        });
+        return { status: "VALIDO" satisfies ScannerStatus, ingresso: atualizado };
+      }
       if (ingresso.status === "CANCELADO") return { status: "CANCELADO" satisfies ScannerStatus, ingresso };
       if (ingresso.status === "VALIDADO" || ingresso.validadoEm) {
         return { status: "JA_UTILIZADO" satisfies ScannerStatus, ingresso };
