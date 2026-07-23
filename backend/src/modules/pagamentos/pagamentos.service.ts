@@ -7,6 +7,7 @@ import { prisma } from "../../lib/prisma.js";
 import { stripe } from "../../lib/stripe.js";
 import { AppError } from "../../utils/http.js";
 import { getPagination } from "../common/schemas.js";
+import { normalizeCpf } from "../pessoas/pessoas.service.js";
 import type { cancelPaymentSchema, manualSettlementSchema, pagamentoQuerySchema, refundPaymentSchema, whatsappCheckoutSchema } from "./pagamentos.schemas.js";
 
 const RESERVATION_MINUTES = 30;
@@ -249,7 +250,18 @@ export function buildPaymentShareText(data: { nome: string; descricao: string; v
 
 export const pagamentosService = {
   async listar(query: z.infer<typeof pagamentoQuerySchema>) {
-    const where: Prisma.PagamentoWhereInput = { status: query.status, customerId: query.customerId };
+    const where: Prisma.PagamentoWhereInput = {
+      status: query.status,
+      customerId: query.customerId,
+      ...(query.search ? {
+        OR: [
+          { cpfCustomer: { contains: normalizeCpf(query.search), mode: "insensitive" } },
+          { nomeCustomer: { contains: query.search, mode: "insensitive" } },
+          { evento: { nome: { contains: query.search, mode: "insensitive" } } },
+          { pedido: { code: { contains: query.search, mode: "insensitive" } } }
+        ]
+      } : {})
+    };
     const [data, total] = await Promise.all([
       prisma.pagamento.findMany({ where, ...getPagination(query), include: { customer: true, evento: true, inscricao: true, pedido: true }, orderBy: { createdAt: "desc" } }),
       prisma.pagamento.count({ where })
