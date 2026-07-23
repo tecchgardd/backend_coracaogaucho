@@ -29,7 +29,8 @@ export function createApp() {
     })
   );
 
-  app.use(helmet());
+  const helmetFactory = helmet as unknown as () => express.RequestHandler;
+  app.use(helmetFactory());
   app.get("/health", (_req, res) => res.json({ status: "ok", stripeConfigured: Boolean(env.STRIPE_SECRET_KEY && env.STRIPE_WEBHOOK_SECRET) }));
   app.get("/", (_req, res) => {
     res.json({ name: "Coração Gaúcho API", status: "ok", health: "/health" });
