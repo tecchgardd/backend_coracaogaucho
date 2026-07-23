@@ -25,7 +25,9 @@ export function createApp() {
         return callback(new Error("Origem não permitida pelo CORS"));
       },
       credentials: true,
-      methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"]
+      methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+      allowedHeaders: ["Content-Type", "Authorization", "X-Requested-With"],
+      exposedHeaders: ["set-auth-token"]
     })
   );
 
