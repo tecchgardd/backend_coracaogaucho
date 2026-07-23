@@ -152,7 +152,14 @@ export const swaggerSpec = swaggerJSDoc({
           parameters: [
             { name: "search", in: "query", required: false, schema: { type: "string" } },
             { name: "tipo", in: "query", required: false, schema: { type: "string", enum: ["EVENTO", "BAILE", "CURSO"] } },
-            { name: "status", in: "query", required: false, schema: { type: "string", enum: ["PENDENTE", "PAGO", "CANCELADO", "CORTESIA"] } }
+            { name: "status", in: "query", required: false, schema: { type: "string" } },
+            { name: "provider", in: "query", required: false, schema: { type: "string", enum: ["STRIPE", "EXTERNO", "CORTESIA"] } },
+            { name: "formaPagamento", in: "query", required: false, schema: { type: "string" } },
+            { name: "origem", in: "query", required: false, schema: { type: "string", enum: ["SITE", "WHATSAPP", "PAINEL_ADMIN"] } },
+            { name: "eventoId", in: "query", required: false, schema: { type: "integer" } },
+            { name: "cursoId", in: "query", required: false, schema: { type: "integer" } },
+            { name: "dataInicial", in: "query", required: false, schema: { type: "string", format: "date-time" } },
+            { name: "dataFinal", in: "query", required: false, schema: { type: "string", format: "date-time" } }
           ],
           responses: { "200": { description: "Lista de vendas" }, "401": { description: "Não autenticado" } }
         },
@@ -200,9 +207,41 @@ export const swaggerSpec = swaggerJSDoc({
         },
         delete: {
           tags: ["Vendas"],
-          summary: "Remove venda",
+          summary: "Cancela venda sem apagar o histórico financeiro",
           parameters: [{ name: "id", in: "path", required: true, schema: { type: "integer" } }],
           responses: { "200": { description: "Venda removida" }, "404": { description: "Venda não encontrada" } }
+        }
+      },
+      "/admin/pagamentos": {
+        get: {
+          tags: ["Pagamentos"],
+          summary: "Lista pagamentos Stripe, externos e cortesias com a venda relacionada",
+          parameters: [
+            { name: "search", in: "query", schema: { type: "string" } },
+            { name: "status", in: "query", schema: { type: "string" } },
+            { name: "provider", in: "query", schema: { type: "string", enum: ["STRIPE", "EXTERNO", "CORTESIA"] } },
+            { name: "forma", in: "query", schema: { type: "string" } },
+            { name: "eventoId", in: "query", schema: { type: "integer" } },
+            { name: "cursoId", in: "query", schema: { type: "integer" } }
+          ],
+          responses: { "200": { description: "Lista paginada de pagamentos" }, "401": { description: "Não autenticado" } }
+        }
+      },
+      "/admin/pagamentos/{id}": {
+        get: {
+          tags: ["Pagamentos"],
+          summary: "Detalha pagamento e venda relacionada",
+          parameters: [{ name: "id", in: "path", required: true, schema: { type: "integer" } }],
+          responses: { "200": { description: "Pagamento encontrado" }, "404": { description: "Pagamento não encontrado" } }
+        }
+      },
+      "/admin/pagamentos/{id}/substituir-por-externo": {
+        post: {
+          tags: ["Pagamentos"],
+          summary: "Cancela ou expira a cobrança Stripe e cria pagamento externo sem apagar o original (somente ADMIN)",
+          parameters: [{ name: "id", in: "path", required: true, schema: { type: "integer" } }],
+          requestBody: { required: true, content: { "application/json": { schema: { type: "object", required: ["method", "reason"], properties: { method: { type: "string", enum: ["PIX_EXTERNO", "DINHEIRO", "CARTAO_CREDITO", "CARTAO_DEBITO"] }, amount: { type: "integer", description: "Centavos" }, paidAt: { type: "string", format: "date-time" }, reference: { type: "string" }, observation: { type: "string" }, reason: { type: "string" } } } } } },
+          responses: { "201": { description: "Pagamento externo criado e relacionado" }, "403": { description: "Somente ADMIN" }, "409": { description: "Cobrança já paga ou não cancelável" } }
         }
       },
       "/admin/scanner/validar": {

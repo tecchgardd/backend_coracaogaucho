@@ -10,7 +10,16 @@ export const vendaQuerySchema = paginationQuerySchema.extend({
   nome: z.string().optional(),
   codigo: z.string().optional(),
   tipo: vendaTipoSchema.optional(),
-  status: vendaStatusSchema.optional()
+  status: z.string().optional(),
+  formaPagamento: z.string().optional(),
+  provider: z.enum(["STRIPE", "EXTERNO", "CORTESIA"]).optional(),
+  origem: z.enum(["SITE", "WHATSAPP", "PAINEL_ADMIN"]).optional(),
+  eventoId: z.coerce.number().int().positive().optional(),
+  cursoId: z.coerce.number().int().positive().optional(),
+  responsavelId: z.string().optional(),
+  dataInicial: z.coerce.date().optional(),
+  dataFinal: z.coerce.date().optional(),
+  sort: z.enum(["createdAt:desc", "createdAt:asc", "total:desc", "total:asc"]).default("createdAt:desc")
 });
 
 export const vendaCreateSchema = z.object({

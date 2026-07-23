@@ -34,9 +34,13 @@ export const scannerService = {
           return { status: "CANCELADO" satisfies ScannerStatus, ingresso: ingressoLote };
         }
 
-        const atualizado = await tx.ingressoAluno.update({
+        const claimed = await tx.ingressoAluno.updateMany({
+          where: { id: ingressoLote.id, utilizadoEm: null, status: { in: ["PAGO", "CORTESIA"] } },
+          data: { status: "UTILIZADO", utilizadoEm: now, validadoPorId: colaboradorId }
+        });
+        if (claimed.count !== 1) return { status: "JA_UTILIZADO" satisfies ScannerStatus, ingresso: ingressoLote };
+        const atualizado = await tx.ingressoAluno.findUniqueOrThrow({
           where: { id: ingressoLote.id },
-          data: { status: "UTILIZADO", utilizadoEm: now, validadoPorId: colaboradorId },
           include: { lote: { include: { evento: true, customer: true } }, validadoPor: true }
         });
         const disponiveis = await tx.ingressoAluno.count({
@@ -73,13 +77,17 @@ export const scannerService = {
 
       if (eventoExpirado) return { status: "EVENTO_EXPIRADO" satisfies ScannerStatus, ingresso };
 
-      const atualizado = await tx.ingresso.update({
-        where: { id: ingresso.id },
+      const claimed = await tx.ingresso.updateMany({
+        where: { id: ingresso.id, validadoEm: null, status: { in: ["PAGO", "CORTESIA"] } },
         data: {
           status: "VALIDADO",
           validadoEm: now,
           validadoPorId: colaboradorId
-        },
+        }
+      });
+      if (claimed.count !== 1) return { status: "JA_UTILIZADO" satisfies ScannerStatus, ingresso };
+      const atualizado = await tx.ingresso.findUniqueOrThrow({
+        where: { id: ingresso.id },
         include: { evento: true, customer: true, validadoPor: true }
       });
 

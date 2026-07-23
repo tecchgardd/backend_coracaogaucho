@@ -58,6 +58,20 @@ function safeProviderMessage(error: unknown) {
   return "StripeError";
 }
 
+function allowedActions(payment: { status: string; provider: string | null; stripePaymentIntentId: string | null }) {
+  const unpaid = ["PENDENTE", "PROCESSANDO", "FALHOU", "EXPIRADO"].includes(payment.status);
+  const refundable = ["PAGO", "PARCIALMENTE_ESTORNADO"].includes(payment.status);
+  return {
+    view: true,
+    edit: payment.provider !== "STRIPE",
+    manualSettlement: unpaid,
+    replaceWithExternal: payment.provider === "STRIPE" && unpaid,
+    refund: refundable && Boolean(payment.stripePaymentIntentId),
+    cancel: unpaid,
+    resendLink: payment.provider === "STRIPE" && unpaid
+  };
+}
+
 function activeReservationWhere(now: Date, excludedOrderId?: number): Prisma.PedidoWhereInput {
   return {
     id: excludedOrderId ? { not: excludedOrderId } : undefined,
@@ -255,6 +269,9 @@ export const pagamentosService = {
       : undefined;
     const where: Prisma.PagamentoWhereInput = {
       status: query.status,
+      provider: query.provider,
+      method: query.forma,
+      eventoId: query.eventoId ?? query.cursoId,
       customerId: query.customerId,
       cpfCustomer: query.cpf ? { contains: normalizeCpf(query.cpf), mode: "insensitive" } : undefined,
       nomeCustomer: query.nome ? { contains: query.nome, mode: "insensitive" } : undefined,
@@ -288,13 +305,19 @@ export const pagamentosService = {
       }),
       prisma.pagamento.count({ where })
     ]);
-    return { data, total, page: query.page, limit: query.limit };
+    return {
+      data: data.map((payment) => ({ ...payment, allowedActions: allowedActions(payment) })),
+      pagination: { page: query.page, limit: query.limit, total, totalPages: Math.ceil(total / query.limit) },
+      total,
+      page: query.page,
+      limit: query.limit
+    };
   },
 
   async buscar(id: number) {
-    const payment = await prisma.pagamento.findUnique({ where: { id }, include: { customer: true, evento: true, inscricao: true, pedido: true } });
+    const payment = await prisma.pagamento.findUnique({ where: { id }, include: { customer: true, evento: true, inscricao: true, pedido: { include: { items: true, ingressos: true, inscricoes: true, loteIngresso: { include: { tickets: true } } } }, refunds: true, replacedPayment: true, replacementPayment: true } });
     if (!payment) throw paymentError("ORDER_NOT_FOUND", "Pagamento nao encontrado", 404);
-    return payment;
+    return { ...payment, allowedActions: allowedActions(payment) };
   },
 
   createCheckoutForOrder(orderId: number, origin: SaleOrigin, actor: PaymentActor) {
@@ -371,7 +394,7 @@ export const pagamentosService = {
             });
           } else {
             await tx.ingresso.createMany({
-              data: Array.from({ length: data.quantity }, (_, index) => ({ customerId: customer.id, eventoId: event.id, orderId: order.id, preco: 0, qrcode: `TKT-${order.id}-${event.id}-${index + 1}`, status: "PAGO", paymentStatus: "PAGO", paidAt: new Date() })),
+              data: Array.from({ length: data.quantity }, () => ({ customerId: customer.id, eventoId: event.id, orderId: order.id, preco: 0, qrcode: `TKT-${randomUUID()}`, status: "PAGO", paymentStatus: "PAGO", paidAt: new Date() })),
               skipDuplicates: true
             });
           }
@@ -448,7 +471,7 @@ export const pagamentosService = {
     return prisma.$transaction(async (tx) => {
       await tx.pagamento.update({
         where: { id },
-        data: { status: "CANCELADO", expiresAt: new Date(), failureReason: `Substituido por ${data.method}: ${data.reason}` }
+        data: { status: "CANCELADO", expiresAt: new Date(), failureReason: `SUBSTITUIDO_POR_PAGAMENTO_EXTERNO: ${data.reason}` }
       });
       const manual = await tx.pagamento.create({
         data: {
@@ -462,6 +485,11 @@ export const pagamentosService = {
           amount,
           currency: payment.currency,
           status: "PAGO",
+          provider: "EXTERNO",
+          method: data.method,
+          externalReference: data.reference,
+          notes: data.observation,
+          replacedPaymentId: id,
           paidAt: data.paidAt,
           gatewayId: `MANUAL-${randomUUID()}`,
           rawProviderData: { source: "MANUAL", method: data.method, reason: data.reason, replacedPaymentId: id }

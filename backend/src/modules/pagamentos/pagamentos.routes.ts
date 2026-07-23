@@ -12,6 +12,7 @@ pagamentosRoutes.get("/", validate({ query: pagamentoQuerySchema }), asyncHandle
 pagamentosRoutes.get("/:id", validate({ params: idParamSchema }), asyncHandler(pagamentosController.buscar));
 pagamentosRoutes.patch("/:id/cancelar", validate({ params: idParamSchema, body: cancelPaymentSchema }), asyncHandler(pagamentosController.cancelar));
 pagamentosRoutes.post("/:id/baixa-externa", requireRoles("ADMIN", "STAFF"), validate({ params: idParamSchema, body: manualSettlementSchema }), asyncHandler(pagamentosController.baixaExterna));
+pagamentosRoutes.post("/:id/substituir-por-externo", requireRoles("ADMIN"), validate({ params: idParamSchema, body: manualSettlementSchema }), asyncHandler(pagamentosController.baixaExterna));
 pagamentosRoutes.post("/:id/reembolsar", requireRoles("ADMIN"), validate({ params: idParamSchema, body: refundPaymentSchema }), asyncHandler(pagamentosController.reembolsar));
 
 export const customerPaymentsRoutes = Router();

@@ -15,7 +15,11 @@ function includeVenda() {
   return {
     customer: true,
     evento: true,
-    items: true
+    items: true,
+    pagamentos: { orderBy: { createdAt: "desc" as const }, include: { refunds: true } },
+    ingressos: true,
+    inscricoes: true,
+    loteIngresso: { include: { tickets: true } }
   } satisfies Prisma.PedidoInclude;
 }
 
@@ -40,6 +44,9 @@ function eventLabel(tipo?: string) {
 
 function toVenda(pedido: Prisma.PedidoGetPayload<{ include: ReturnType<typeof includeVenda> }>) {
   const item = pedido.items[0];
+  const pagamento = pedido.pagamentos.find((value) => value.status === "PAGO")
+    ?? pedido.pagamentos.find((value) => value.status === "PARCIALMENTE_ESTORNADO")
+    ?? pedido.pagamentos[0];
   const metadata = pedido.notes ? tryParseJson(pedido.notes) : {};
   return {
     id: String(pedido.id),
@@ -61,8 +68,19 @@ function toVenda(pedido: Prisma.PedidoGetPayload<{ include: ReturnType<typeof in
     valorUnitario: Number(item?.unitPrice ?? pedido.total),
     valorTotal: Number(pedido.total),
     desconto: Number(metadata.desconto ?? 0),
-    formaPagamento: pedido.paymentMethod,
-    pagamentoId: metadata.pagamentoId ? String(metadata.pagamentoId) : undefined,
+    formaPagamento: pagamento?.method ?? pedido.paymentMethod,
+    pagamentoId: pagamento ? String(pagamento.id) : metadata.pagamentoId ? String(metadata.pagamentoId) : undefined,
+    pagamentoPrincipal: pagamento ? {
+      id: String(pagamento.id),
+      provider: pagamento.provider,
+      forma: pagamento.method ?? pedido.paymentMethod,
+      status: pagamento.status,
+      valor: pagamento.amount / 100,
+      valorReembolsado: pagamento.refundedAmount / 100
+    } : null,
+    origem: pedido.origin,
+    pagoEm: pagamento?.paidAt,
+    documentosDisponiveis: [],
     checkoutUrl: metadata.checkoutUrl ? String(metadata.checkoutUrl) : undefined,
     observacao: metadata.observacao,
     createdAt: pedido.createdAt,
@@ -83,9 +101,13 @@ export const vendasService = {
   async listar(query: z.infer<typeof vendaQuerySchema>) {
     const status = query.status ? mapStatus(query.status) : undefined;
     const where: Prisma.PedidoWhereInput = {
-      type: "EVENT",
       paymentStatus: status,
       code: query.codigo ? { contains: query.codigo, mode: "insensitive" } : undefined,
+      eventId: query.eventoId ?? query.cursoId,
+      origin: query.origem,
+      paymentMethod: query.formaPagamento,
+      pagamentos: query.provider ? { some: { provider: query.provider } } : undefined,
+      createdAt: query.dataInicial || query.dataFinal ? { gte: query.dataInicial, lte: query.dataFinal } : undefined,
       evento: query.tipo ? { tipo: query.tipo } : undefined,
       ...(query.cpf || query.nome || query.search
         ? {
@@ -98,22 +120,33 @@ export const vendasService = {
         : {})
     };
 
+    const [sortField, sortDirection] = query.sort.split(":") as ["createdAt" | "total", "asc" | "desc"];
     const [data, total, summaryRows] = await Promise.all([
-      prisma.pedido.findMany({ where, include: includeVenda(), ...getPagination(query), orderBy: { createdAt: "desc" } }),
+      prisma.pedido.findMany({ where, include: includeVenda(), ...getPagination(query), orderBy: { [sortField]: sortDirection } }),
       prisma.pedido.count({ where }),
-      prisma.pedido.findMany({ where: { type: "EVENT" }, include: { items: true } })
+      prisma.pedido.findMany({ include: { items: true, pagamentos: true } })
     ]);
     const summary = summaryRows.reduce((acc, pedido) => {
       const metadata = pedido.notes ? tryParseJson(pedido.notes) : {};
       const statusVenda = String(metadata.statusVenda ?? pedido.paymentStatus ?? pedido.status);
-      acc.totalVendido += statusVenda === "PAGO" || statusVenda === "CORTESIA" ? Number(pedido.total) : 0;
+      const reembolsado = pedido.pagamentos.reduce((sum, payment) => sum + payment.refundedAmount, 0) / 100;
+      acc.totalVendido += statusVenda === "PAGO" || statusVenda === "PARCIALMENTE_ESTORNADO"
+        ? Math.max(0, Number(pedido.total) - reembolsado)
+        : 0;
       if (statusVenda === "PAGO") acc.vendasPagas += 1;
       if (statusVenda === "PENDENTE") acc.vendasPendentes += 1;
       if (statusVenda === "CORTESIA") acc.cortesias += 1;
       return acc;
     }, { totalVendido: 0, vendasPagas: 0, vendasPendentes: 0, cortesias: 0 });
 
-    return { data: data.map(toVenda), total, page: query.page, limit: query.limit, summary };
+    return {
+      data: data.map(toVenda),
+      pagination: { page: query.page, limit: query.limit, total, totalPages: Math.ceil(total / query.limit) },
+      summary: { ...summary, pendentes: summary.vendasPendentes },
+      total,
+      page: query.page,
+      limit: query.limit
+    };
   },
 
   async buscar(id: number) {
@@ -218,20 +251,20 @@ export const vendasService = {
         inscricaoVendaId = inscricaoVenda.id;
       } else {
         await tx.ingresso.createMany({
-        data: Array.from({ length: data.quantidade }, (_, index) => ({
+        data: Array.from({ length: data.quantidade }, () => ({
           customerId,
           eventoId: eventId,
           orderId: pedido.id,
           preco: unitPrice,
-          qrcode: `TKT-${pedido.id}-${eventId}-${index + 1}`,
+          qrcode: `TKT-${randomUUID()}`,
           status: statusVenda === "PAGO" || statusVenda === "CORTESIA" ? "PAGO" : "PENDENTE",
           paymentStatus: statusVenda === "PAGO" || statusVenda === "CORTESIA" ? "PAGO" : "PENDENTE",
           paidAt: statusVenda === "PAGO" || statusVenda === "CORTESIA" ? new Date() : undefined
         }))
       });
       }
-      if (external) {
-        await tx.pagamento.create({ data: { inscricaoId: inscricaoVendaId, pedidoId: pedido.id, customerId, eventoId: eventId, nomeCustomer: person.data.nome, cpfCustomer: person.data.cpf ?? normalizeCpf(data.cpf), valor: total, amount: Math.round(total * 100), status: "PAGO", paidAt: new Date(), gatewayId: `MANUAL-${randomUUID()}`, rawProviderData: { source: "PAINEL_ADMIN", method: data.formaPagamento } } });
+      if (external || statusVenda === "CORTESIA") {
+        await tx.pagamento.create({ data: { inscricaoId: inscricaoVendaId, pedidoId: pedido.id, customerId, eventoId: eventId, nomeCustomer: person.data.nome, cpfCustomer: person.data.cpf ?? normalizeCpf(data.cpf), valor: total, amount: Math.round(total * 100), status: "PAGO", provider: statusVenda === "CORTESIA" ? "CORTESIA" : "EXTERNO", method: data.formaPagamento, paidAt: new Date(), gatewayId: `MANUAL-${randomUUID()}`, rawProviderData: { source: "PAINEL_ADMIN", method: data.formaPagamento } } });
       }
       await tx.auditLog.create({
         data: {
@@ -325,8 +358,20 @@ export const vendasService = {
   },
 
   async remover(id: number) {
-    await this.buscar(id);
-    await prisma.pedido.delete({ where: { id } });
-    return { ok: true };
+    const venda = await this.buscar(id);
+    if (["PAGO", "CORTESIA", "PARCIALMENTE_ESTORNADO", "ESTORNADO"].includes(String(venda.status))) {
+      throw new AppError("Venda com historico financeiro nao pode ser excluida; use cancelamento ou reembolso", 409);
+    }
+    return prisma.$transaction(async (tx) => {
+      const pedido = await tx.pedido.update({
+        where: { id },
+        data: { status: "CANCELADO", paymentStatus: "CANCELADO", expiresAt: new Date() },
+        include: includeVenda()
+      });
+      await tx.auditLog.create({
+        data: { action: "VENDA_CANCELADA", entity: "Pedido", entityId: String(id), metadata: { reason: "Cancelamento administrativo pela rota legada" } }
+      });
+      return toVenda(pedido);
+    });
   }
 };

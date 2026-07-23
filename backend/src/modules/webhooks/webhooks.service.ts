@@ -1,4 +1,5 @@
 import { Prisma, type PagamentoStatus } from "@prisma/client";
+import { createHmac } from "node:crypto";
 import type Stripe from "stripe";
 import { env } from "../../env.js";
 import { prisma } from "../../lib/prisma.js";
@@ -83,7 +84,9 @@ function parseNotes(notes?: string | null) {
 }
 
 export function ticketQrCode(orderId: number, eventId: number, oneBasedIndex: number) {
-  return `TKT-${orderId}-${eventId}-${oneBasedIndex}`;
+  const payload = `${orderId}:${eventId}:${oneBasedIndex}`;
+  const token = createHmac("sha256", env.STRIPE_WEBHOOK_SECRET).update(payload).digest("base64url");
+  return `TKT-${token}`;
 }
 
 export function refundStatus(amount: number, amountRefunded: number): PagamentoStatus {
@@ -115,7 +118,7 @@ export async function finalizePaidOrder(input: {
     if (!payment) return;
     if (
       payment.status === "CANCELADO" &&
-      payment.failureReason?.startsWith("Substituido por ") &&
+      payment.failureReason?.startsWith("SUBSTITUIDO_POR_PAGAMENTO_EXTERNO:") &&
       payment.pedido?.paymentStatus === "PAGO"
     ) {
       return;

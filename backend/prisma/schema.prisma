@@ -145,6 +145,10 @@ model Pagamento {
   checkoutUrl             String?
   rawWebhook              String?
   provider                PaymentProvider?
+  method                  String?
+  externalReference       String?
+  notes                   String?
+  replacedPaymentId       Int?             @unique
   amount                  Int
   currency                String           @default("brl")
   stripeCheckoutSessionId String?          @unique
@@ -168,6 +172,8 @@ model Pagamento {
   inscricao               Inscricao?       @relation(fields: [inscricaoId], references: [id], onDelete: Cascade, onUpdate: NoAction)
   pedido                  Pedido?          @relation(fields: [pedidoId], references: [id], onDelete: SetNull, onUpdate: NoAction)
   refunds                 PaymentRefund[]
+  replacedPayment         Pagamento?       @relation("PaymentReplacement", fields: [replacedPaymentId], references: [id], onDelete: SetNull)
+  replacementPayment      Pagamento?       @relation("PaymentReplacement")
 
   @@index([customerId], map: "idx_pagamento_customer")
   @@index([eventoId], map: "idx_pagamento_evento")
@@ -175,6 +181,8 @@ model Pagamento {
   @@index([status], map: "idx_pagamento_status")
   @@index([pedidoId], map: "idx_pagamento_pedido")
   @@index([inscricaoId], map: "idx_pagamento_inscricao")
+  @@index([provider, status], map: "idx_pagamento_provider_status")
+  @@index([method], map: "idx_pagamento_method")
   @@map("pagamento")
 }
 
@@ -558,6 +566,8 @@ enum PagamentoStatus {
 
 enum PaymentProvider {
   STRIPE
+  EXTERNO
+  CORTESIA
 }
 
 enum SaleOrigin {

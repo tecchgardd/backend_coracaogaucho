@@ -10,6 +10,10 @@ export const pagamentoQuerySchema = paginationQuerySchema.extend({
   codigo: z.string().optional(),
   item: z.string().optional(),
   origem: z.enum(["SITE", "WHATSAPP", "PAINEL_ADMIN"]).optional(),
+  provider: z.enum(["STRIPE", "EXTERNO", "CORTESIA"]).optional(),
+  forma: z.string().optional(),
+  eventoId: z.coerce.number().int().positive().optional(),
+  cursoId: z.coerce.number().int().positive().optional(),
   dataInicio: z.coerce.date().optional(),
   dataFim: z.coerce.date().optional()
 });
@@ -44,7 +48,9 @@ export const manualSettlementSchema = z.object({
   method: z.enum(["PIX_EXTERNO", "DINHEIRO", "CARTAO_CREDITO", "CARTAO_DEBITO"]),
   amount: z.coerce.number().int().positive().optional(),
   paidAt: z.coerce.date().default(() => new Date()),
-  reason: z.string().trim().min(3).max(500)
+  reason: z.string().trim().min(3).max(500),
+  reference: z.string().trim().max(200).optional(),
+  observation: z.string().trim().max(1000).optional()
 });
 
 export const refundPaymentSchema = z.object({
