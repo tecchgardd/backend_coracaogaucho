@@ -7,7 +7,7 @@ import { prisma } from "../../lib/prisma.js";
 import { stripe } from "../../lib/stripe.js";
 import { AppError } from "../../utils/http.js";
 import { getPagination } from "../common/schemas.js";
-import type { cancelPaymentSchema, pagamentoQuerySchema, refundPaymentSchema, whatsappCheckoutSchema } from "./pagamentos.schemas.js";
+import type { cancelPaymentSchema, manualSettlementSchema, pagamentoQuerySchema, refundPaymentSchema, whatsappCheckoutSchema } from "./pagamentos.schemas.js";
 
 const RESERVATION_MINUTES = 30;
 const MAX_TICKETS_PER_CUSTOMER_EVENT = 10;
@@ -389,6 +389,56 @@ export const pagamentosService = {
       await tx.auditLog.create({ data: { action: "PAGAMENTO_CANCELADO", entity: "Pagamento", entityId: String(id), colaboradorId: actor.colaboradorId, metadata: { reason: data.reason, orderId: payment.pedidoId } } });
     });
     return this.buscar(id);
+  },
+
+  async settleExternally(id: number, actor: AdminActor, data: z.infer<typeof manualSettlementSchema>) {
+    const payment = await this.buscar(id);
+    if (!["PENDENTE", "PROCESSANDO", "FALHOU", "EXPIRADO"].includes(payment.status)) {
+      throw paymentError("INVALID_ORDER_STATUS", "Somente cobrancas nao pagas podem receber baixa externa", 409);
+    }
+    if (payment.stripeCheckoutSessionId) {
+      const session = await stripe.checkout.sessions.retrieve(payment.stripeCheckoutSessionId);
+      if (session.payment_status === "paid") throw paymentError("ORDER_ALREADY_PAID", "A Stripe ja confirmou este pagamento", 409);
+      if (session.status === "open") await stripe.checkout.sessions.expire(session.id);
+    }
+    const amount = data.amount ?? payment.amount;
+    if (amount !== payment.amount) throw paymentError("INVALID_PAYMENT_AMOUNT", "A baixa parcial ainda nao e suportada", 422);
+
+    return prisma.$transaction(async (tx) => {
+      await tx.pagamento.update({
+        where: { id },
+        data: { status: "CANCELADO", expiresAt: new Date(), failureReason: `Substituido por ${data.method}: ${data.reason}` }
+      });
+      const manual = await tx.pagamento.create({
+        data: {
+          inscricaoId: payment.inscricaoId,
+          pedidoId: payment.pedidoId,
+          customerId: payment.customerId,
+          eventoId: payment.eventoId,
+          nomeCustomer: payment.nomeCustomer,
+          cpfCustomer: payment.cpfCustomer,
+          valor: amount / 100,
+          amount,
+          currency: payment.currency,
+          status: "PAGO",
+          paidAt: data.paidAt,
+          gatewayId: `MANUAL-${randomUUID()}`,
+          rawProviderData: { source: "MANUAL", method: data.method, reason: data.reason, replacedPaymentId: id }
+        }
+      });
+      if (payment.pedidoId) {
+        await tx.pedido.update({ where: { id: payment.pedidoId }, data: { status: "PAGO", paymentStatus: "PAGO", paymentMethod: data.method, expiresAt: null } });
+        await tx.ingresso.updateMany({ where: { orderId: payment.pedidoId }, data: { status: "PAGO", paymentStatus: "PAGO", paidAt: data.paidAt } });
+        const lote = await tx.loteIngressoAluno.findUnique({ where: { pedidoId: payment.pedidoId } });
+        if (lote) {
+          await tx.loteIngressoAluno.update({ where: { id: lote.id }, data: { status: "PAGO", paymentStatus: "PAGO" } });
+          await tx.ingressoAluno.updateMany({ where: { loteId: lote.id, tipo: "NORMAL" }, data: { status: "PAGO" } });
+        }
+      }
+      if (payment.inscricaoId) await tx.inscricao.update({ where: { id: payment.inscricaoId }, data: { status: "CONFIRMADA" } });
+      await tx.auditLog.create({ data: { action: "PAGAMENTO_BAIXA_EXTERNA", entity: "Pagamento", entityId: String(manual.id), colaboradorId: actor.colaboradorId, metadata: { replacedPaymentId: id, method: data.method, amount, reason: data.reason } } });
+      return manual;
+    });
   },
 
   async refund(id: number, actor: AdminActor, data: z.infer<typeof refundPaymentSchema>) {

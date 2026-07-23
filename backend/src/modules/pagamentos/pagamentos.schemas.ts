@@ -33,6 +33,13 @@ export const cancelPaymentSchema = z.object({
   reason: z.string().trim().min(3).max(300).default("Cancelamento administrativo")
 });
 
+export const manualSettlementSchema = z.object({
+  method: z.enum(["PIX_EXTERNO", "DINHEIRO", "CARTAO_CREDITO", "CARTAO_DEBITO"]),
+  amount: z.coerce.number().int().positive().optional(),
+  paidAt: z.coerce.date().default(() => new Date()),
+  reason: z.string().trim().min(3).max(500)
+});
+
 export const refundPaymentSchema = z.object({
   amount: z.coerce.number().int().positive().optional(),
   reason: z.string().trim().min(3).max(300),
