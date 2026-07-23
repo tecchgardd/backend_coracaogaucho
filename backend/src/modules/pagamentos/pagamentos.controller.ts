@@ -4,7 +4,7 @@ import type { z } from "zod";
 import { env } from "../../env.js";
 import { AppError } from "../../utils/http.js";
 import { meService } from "../me/me.service.js";
-import type { cancelPaymentSchema, checkoutSchema, manualSettlementSchema, refundPaymentSchema, whatsappCheckoutSchema } from "./pagamentos.schemas.js";
+import type { cancelPaymentSchema, checkoutSchema, editPaymentSchema, manualSettlementSchema, refundPaymentSchema, whatsappCheckoutSchema } from "./pagamentos.schemas.js";
 import { pagamentosService } from "./pagamentos.service.js";
 
 function customerActor(req: Request) {
@@ -56,6 +56,10 @@ export const pagamentosController = {
   async baixaExterna(req: Request, res: Response) {
     if (!req.auth) throw new AppError("Nao autenticado", 401);
     res.status(201).json(await pagamentosService.settleExternally(Number(req.params.id), req.auth, req.body as z.infer<typeof manualSettlementSchema>));
+  },
+  async editar(req: Request, res: Response) {
+    if (!req.auth) throw new AppError("Nao autenticado", 401);
+    res.json(await pagamentosService.edit(Number(req.params.id), req.auth, req.body as z.infer<typeof editPaymentSchema>));
   },
   async reembolsar(req: Request, res: Response) {
     if (!req.auth) throw new AppError("Nao autenticado", 401);

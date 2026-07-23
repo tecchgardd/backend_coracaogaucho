@@ -8,6 +8,7 @@ export const vendasRoutes = Router();
 
 vendasRoutes.get("/", validate({ query: vendaQuerySchema }), asyncHandler(vendasController.listar));
 vendasRoutes.get("/:id", validate({ params: idParamSchema }), asyncHandler(vendasController.buscar));
+vendasRoutes.get("/:id/historico", validate({ params: idParamSchema }), asyncHandler(vendasController.historico));
 vendasRoutes.post("/", validate({ body: vendaCreateSchema }), asyncHandler(vendasController.criar));
 vendasRoutes.patch("/:id", validate({ params: idParamSchema, body: vendaUpdateSchema }), asyncHandler(vendasController.atualizar));
 vendasRoutes.post("/:id/link-pagamento", validate({ params: idParamSchema }), asyncHandler(vendasController.gerarLinkPagamento));

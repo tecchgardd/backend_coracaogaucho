@@ -8,6 +8,9 @@ export const vendasController = {
   async buscar(req: Request, res: Response) {
     res.json(await vendasService.buscar(Number(req.params.id)));
   },
+  async historico(req: Request, res: Response) {
+    res.json(await vendasService.historico(Number(req.params.id)));
+  },
   async criar(req: Request, res: Response) {
     res.status(201).json(await vendasService.criar(req.body));
   },

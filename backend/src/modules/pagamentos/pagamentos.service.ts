@@ -8,7 +8,7 @@ import { stripe } from "../../lib/stripe.js";
 import { AppError } from "../../utils/http.js";
 import { getPagination } from "../common/schemas.js";
 import { normalizeCpf } from "../pessoas/pessoas.service.js";
-import type { cancelPaymentSchema, manualSettlementSchema, pagamentoQuerySchema, refundPaymentSchema, whatsappCheckoutSchema } from "./pagamentos.schemas.js";
+import type { cancelPaymentSchema, editPaymentSchema, manualSettlementSchema, pagamentoQuerySchema, refundPaymentSchema, whatsappCheckoutSchema } from "./pagamentos.schemas.js";
 
 const RESERVATION_MINUTES = 30;
 const MAX_TICKETS_PER_CUSTOMER_EVENT = 10;
@@ -283,10 +283,12 @@ export const pagamentosService = {
       createdAt,
       ...(query.search ? {
         OR: [
-          { cpfCustomer: { contains: normalizeCpf(query.search), mode: "insensitive" } },
           { nomeCustomer: { contains: query.search, mode: "insensitive" } },
           { evento: { nome: { contains: query.search, mode: "insensitive" } } },
-          { pedido: { code: { contains: query.search, mode: "insensitive" } } }
+          { pedido: { code: { contains: query.search, mode: "insensitive" } } },
+          { gatewayId: { contains: query.search, mode: "insensitive" } },
+          { externalReference: { contains: query.search, mode: "insensitive" } },
+          ...(normalizeCpf(query.search) ? [{ cpfCustomer: { contains: normalizeCpf(query.search), mode: "insensitive" as const } }] : [])
         ]
       } : {})
     };
@@ -318,6 +320,57 @@ export const pagamentosService = {
     const payment = await prisma.pagamento.findUnique({ where: { id }, include: { customer: true, evento: true, inscricao: true, pedido: { include: { items: true, ingressos: true, inscricoes: true, loteIngresso: { include: { tickets: true } } } }, refunds: true, replacedPayment: true, replacementPayment: true } });
     if (!payment) throw paymentError("ORDER_NOT_FOUND", "Pagamento nao encontrado", 404);
     return { ...payment, allowedActions: allowedActions(payment) };
+  },
+
+  async edit(id: number, actor: AdminActor, data: z.infer<typeof editPaymentSchema>) {
+    const current = await prisma.pagamento.findUnique({ where: { id } });
+    if (!current) throw paymentError("ORDER_NOT_FOUND", "Pagamento nao encontrado", 404);
+    if (current.provider === "STRIPE") {
+      throw paymentError("INVALID_PAYMENT_PROVIDER", "Dados financeiros da Stripe nao podem ser editados manualmente", 409);
+    }
+    const paid = data.status === "PAGO";
+    await prisma.$transaction(async (tx) => {
+      await tx.pagamento.update({
+        where: { id },
+        data: {
+          method: data.method,
+          status: data.status,
+          amount: data.amount,
+          valor: data.amount / 100,
+          paidAt: paid ? data.paidAt ?? current.paidAt ?? new Date() : null,
+          externalReference: data.reference,
+          notes: data.observation
+        }
+      });
+      if (current.pedidoId) {
+        await tx.pedido.update({
+          where: { id: current.pedidoId },
+          data: { status: data.status, paymentStatus: data.status, paymentMethod: data.method }
+        });
+        await tx.ingresso.updateMany({
+          where: { orderId: current.pedidoId },
+          data: { status: paid ? "PAGO" : data.status, paymentStatus: data.status, paidAt: paid ? data.paidAt ?? current.paidAt ?? new Date() : null }
+        });
+      }
+      if (current.inscricaoId) {
+        await tx.inscricao.update({ where: { id: current.inscricaoId }, data: { status: paid ? "CONFIRMADA" : data.status === "CANCELADO" ? "CANCELADA" : "PENDENTE" } });
+      }
+      await tx.auditLog.create({
+        data: {
+          action: "PAGAMENTO_EDITADO",
+          entity: "Pagamento",
+          entityId: String(id),
+          colaboradorId: actor.colaboradorId,
+          metadata: {
+            reason: data.reason,
+            previous: { method: current.method, status: current.status, amount: current.amount, paidAt: current.paidAt },
+            next: { method: data.method, status: data.status, amount: data.amount, paidAt: data.paidAt },
+            orderId: current.pedidoId
+          }
+        }
+      });
+    });
+    return this.buscar(id);
   },
 
   createCheckoutForOrder(orderId: number, origin: SaleOrigin, actor: PaymentActor) {

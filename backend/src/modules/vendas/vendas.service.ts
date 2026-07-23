@@ -112,9 +112,20 @@ export const vendasService = {
       ...(query.cpf || query.nome || query.search
         ? {
             OR: [
-              { code: { contains: query.search ?? "", mode: "insensitive" } },
-              { customer: { cpf: { contains: normalizeCpf(query.cpf ?? query.search ?? ""), mode: "insensitive" } } },
-              { customer: { nome: { contains: query.nome ?? query.search ?? "", mode: "insensitive" } } }
+              ...(query.search ? [
+                { code: { contains: query.search, mode: "insensitive" as const } },
+                { customer: { nome: { contains: query.search, mode: "insensitive" as const } } },
+                { evento: { nome: { contains: query.search, mode: "insensitive" as const } } },
+                { items: { some: { description: { contains: query.search, mode: "insensitive" as const } } } },
+                { ingressos: { some: { qrcode: { contains: query.search, mode: "insensitive" as const } } } },
+                { loteIngresso: { tickets: { some: { OR: [
+                  { codigo: { contains: query.search, mode: "insensitive" as const } },
+                  { qrcode: { contains: query.search, mode: "insensitive" as const } }
+                ] } } } },
+                ...(normalizeCpf(query.search) ? [{ customer: { cpf: { contains: normalizeCpf(query.search), mode: "insensitive" as const } } }] : [])
+              ] : []),
+              ...(query.cpf ? [{ customer: { cpf: { contains: normalizeCpf(query.cpf), mode: "insensitive" as const } } }] : []),
+              ...(query.nome ? [{ customer: { nome: { contains: query.nome, mode: "insensitive" as const } } }] : [])
             ]
           }
         : {})
@@ -153,6 +164,47 @@ export const vendasService = {
     const pedido = await prisma.pedido.findUnique({ where: { id }, include: includeVenda() });
     if (!pedido) throw new AppError("Venda não encontrada", 404);
     return toVenda(pedido);
+  },
+
+  async historico(id: number) {
+    const venda = await prisma.pedido.findUnique({ where: { id }, select: { id: true, pagamentos: { select: { id: true } }, loteIngresso: { select: { id: true } } } });
+    if (!venda) throw new AppError("Venda nao encontrada", 404);
+    const paymentIds = venda.pagamentos.map((payment) => String(payment.id));
+    const [audit, loteHistory] = await Promise.all([
+      prisma.auditLog.findMany({
+        where: {
+          OR: [
+            { entity: "Pedido", entityId: String(id) },
+            ...(paymentIds.length ? [{ entity: "Pagamento", entityId: { in: paymentIds } }] : [])
+          ]
+        },
+        include: { colaborador: true },
+        orderBy: { createdAt: "desc" }
+      }),
+      venda.loteIngresso
+        ? prisma.historicoPagamento.findMany({ where: { loteId: venda.loteIngresso.id }, orderBy: { createdAt: "desc" } })
+        : Promise.resolve([])
+    ]);
+    return [...audit.map((item) => ({
+      id: `audit-${item.id}`,
+      action: item.action,
+      fromStatus: (item.metadata as Record<string, unknown> | null)?.previous && typeof (item.metadata as Record<string, unknown>).previous === "object"
+        ? String(((item.metadata as Record<string, unknown>).previous as Record<string, unknown>).status ?? "")
+        : undefined,
+      toStatus: (item.metadata as Record<string, unknown> | null)?.next && typeof (item.metadata as Record<string, unknown>).next === "object"
+        ? String(((item.metadata as Record<string, unknown>).next as Record<string, unknown>).status ?? "")
+        : undefined,
+      reason: String((item.metadata as Record<string, unknown> | null)?.reason ?? ""),
+      createdAt: item.createdAt,
+      userName: item.colaborador?.nome
+    })), ...loteHistory.map((item) => ({
+      id: `lote-${item.id}`,
+      action: item.action,
+      fromStatus: item.fromStatus,
+      toStatus: item.toStatus,
+      reason: item.reason,
+      createdAt: item.createdAt
+    }))].sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
   },
 
   async criar(data: VendaCreate) {

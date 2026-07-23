@@ -5,11 +5,12 @@ import { requireRoles } from "../../middlewares/role.middleware.js";
 import { asyncHandler, validate } from "../../utils/http.js";
 import { idParamSchema } from "../common/schemas.js";
 import { pagamentosController } from "./pagamentos.controller.js";
-import { cancelPaymentSchema, checkoutSchema, manualSettlementSchema, orderParamSchema, pagamentoQuerySchema, refundPaymentSchema, whatsappCheckoutSchema } from "./pagamentos.schemas.js";
+import { cancelPaymentSchema, checkoutSchema, editPaymentSchema, manualSettlementSchema, orderParamSchema, pagamentoQuerySchema, refundPaymentSchema, whatsappCheckoutSchema } from "./pagamentos.schemas.js";
 
 export const pagamentosRoutes = Router();
 pagamentosRoutes.get("/", validate({ query: pagamentoQuerySchema }), asyncHandler(pagamentosController.listar));
 pagamentosRoutes.get("/:id", validate({ params: idParamSchema }), asyncHandler(pagamentosController.buscar));
+pagamentosRoutes.patch("/:id", requireRoles("ADMIN", "STAFF"), validate({ params: idParamSchema, body: editPaymentSchema }), asyncHandler(pagamentosController.editar));
 pagamentosRoutes.patch("/:id/cancelar", validate({ params: idParamSchema, body: cancelPaymentSchema }), asyncHandler(pagamentosController.cancelar));
 pagamentosRoutes.post("/:id/baixa-externa", requireRoles("ADMIN", "STAFF"), validate({ params: idParamSchema, body: manualSettlementSchema }), asyncHandler(pagamentosController.baixaExterna));
 pagamentosRoutes.post("/:id/substituir-por-externo", requireRoles("ADMIN"), validate({ params: idParamSchema, body: manualSettlementSchema }), asyncHandler(pagamentosController.baixaExterna));

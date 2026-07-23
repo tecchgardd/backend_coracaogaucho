@@ -53,6 +53,16 @@ export const manualSettlementSchema = z.object({
   observation: z.string().trim().max(1000).optional()
 });
 
+export const editPaymentSchema = z.object({
+  method: z.enum(["PIX_EXTERNO", "DINHEIRO", "CARTAO_CREDITO", "CARTAO_DEBITO", "CORTESIA"]),
+  status: z.enum(["PENDENTE", "PROCESSANDO", "PAGO", "FALHOU", "CANCELADO", "EXPIRADO"]),
+  amount: z.coerce.number().int().nonnegative(),
+  paidAt: z.coerce.date().nullable().optional(),
+  reference: z.string().trim().max(200).optional(),
+  observation: z.string().trim().max(1000).optional(),
+  reason: z.string().trim().min(3).max(500)
+});
+
 export const refundPaymentSchema = z.object({
   amount: z.coerce.number().int().positive().optional(),
   reason: z.string().trim().min(3).max(300),
