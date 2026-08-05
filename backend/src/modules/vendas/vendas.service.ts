@@ -377,6 +377,7 @@ export const vendasService = {
     const metadata = pedido.notes ? tryParseJson(pedido.notes) : {};
     const descricao = `${eventLabel(String(metadata.tipoVenda))} - ${pedido.evento?.nome ?? pedido.code}`;
     const pagamento = await pagamentosService.createCheckoutForOrder(pedido.id, "PAINEL_ADMIN", { admin: true });
+    if (!pagamento.checkoutUrl) throw new AppError("Nao foi possivel gerar o link de pagamento", 500);
     const checkoutUrl = pagamento.checkoutUrl;
 
     const updated = await prisma.pedido.update({

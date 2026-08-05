@@ -328,6 +328,22 @@ export const swaggerSpec = swaggerJSDoc({
           responses: { "201": { description: "Checkout criado" }, "401": { description: "Segredo ausente ou inválido" }, "409": { description: "Evento ou capacidade indisponível" } }
         }
       },
+      "/integrations/payment-status": {
+        get: {
+          tags: ["Integrações"], security: [{ integrationSecret: [] }], summary: "Consulta o pagamento mais relevante de um customer para um evento (n8n/WhatsApp)",
+          parameters: [
+            { name: "customerId", in: "query", required: false, schema: { type: "integer" }, description: "Obrigatório se cpf não for informado" },
+            { name: "cpf", in: "query", required: false, schema: { type: "string", example: "00000000000" }, description: "Obrigatório se customerId não for informado" },
+            { name: "eventId", in: "query", required: true, schema: { type: "integer" } }
+          ],
+          responses: {
+            "200": { description: "Pagamento mais relevante (PAGO > PENDENTE/PROCESSANDO vigente > mais recente), com status da inscrição vinculada" },
+            "401": { description: "Segredo ausente ou inválido" },
+            "404": { description: "Nenhum pagamento encontrado para o customer+evento" },
+            "422": { description: "customerId ou cpf ausente" }
+          }
+        }
+      },
       "/stripe/webhook": {
         post: { tags: ["Webhooks"], security: [], summary: "Chamado somente pela Stripe; usa corpo bruto e stripe-signature, nunca pelo frontend", parameters: [{ name: "stripe-signature", in: "header", required: true, schema: { type: "string" } }], responses: { "200": { description: "Evento processado, ignorado ou duplicado" }, "400": { description: "Assinatura ausente ou inválida" } } }
       },

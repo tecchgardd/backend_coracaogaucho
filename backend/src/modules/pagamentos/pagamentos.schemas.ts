@@ -82,3 +82,13 @@ export const whatsappCheckoutSchema = z.object({
   customer: integrationCustomerSchema,
   origin: z.literal("WHATSAPP").default("WHATSAPP")
 });
+
+export const paymentStatusQuerySchema = z.object({
+  customerId: z.coerce.number().int().positive().optional(),
+  cpf: z.string().optional(),
+  eventId: z.coerce.number().int().positive()
+}).superRefine((data, ctx) => {
+  if (!data.customerId && !data.cpf) {
+    ctx.addIssue({ code: "custom", path: ["customerId"], message: "Informe customerId ou cpf" });
+  }
+});

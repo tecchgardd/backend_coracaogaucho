@@ -4,7 +4,7 @@ import type { z } from "zod";
 import { env } from "../../env.js";
 import { AppError } from "../../utils/http.js";
 import { meService } from "../me/me.service.js";
-import type { cancelPaymentSchema, checkoutSchema, editPaymentSchema, manualSettlementSchema, refundPaymentSchema, whatsappCheckoutSchema } from "./pagamentos.schemas.js";
+import type { cancelPaymentSchema, checkoutSchema, editPaymentSchema, manualSettlementSchema, paymentStatusQuerySchema, refundPaymentSchema, whatsappCheckoutSchema } from "./pagamentos.schemas.js";
 import { pagamentosService } from "./pagamentos.service.js";
 
 function customerActor(req: Request) {
@@ -48,6 +48,13 @@ export const pagamentosController = {
     }
     const data = await pagamentosService.createWhatsappOrder(req.body as z.infer<typeof whatsappCheckoutSchema>);
     res.status(201).json({ success: true, data });
+  },
+  async paymentStatus(req: Request, res: Response) {
+    if (!integrationSecretIsValid(req.get("x-integration-secret"))) {
+      throw new AppError("Integracao nao autorizada", 401, { code: "UNAUTHORIZED_INTEGRATION" });
+    }
+    const data = await pagamentosService.integrationPaymentStatus(req.query as unknown as z.infer<typeof paymentStatusQuerySchema>);
+    res.json({ success: true, data });
   },
   async cancelar(req: Request, res: Response) {
     if (!req.auth) throw new AppError("Nao autenticado", 401);

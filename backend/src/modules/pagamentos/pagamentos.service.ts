@@ -8,7 +8,7 @@ import { stripe } from "../../lib/stripe.js";
 import { AppError } from "../../utils/http.js";
 import { getPagination } from "../common/schemas.js";
 import { normalizeCpf } from "../pessoas/pessoas.service.js";
-import type { cancelPaymentSchema, editPaymentSchema, manualSettlementSchema, pagamentoQuerySchema, refundPaymentSchema, whatsappCheckoutSchema } from "./pagamentos.schemas.js";
+import type { cancelPaymentSchema, editPaymentSchema, manualSettlementSchema, pagamentoQuerySchema, paymentStatusQuerySchema, refundPaymentSchema, whatsappCheckoutSchema } from "./pagamentos.schemas.js";
 
 const RESERVATION_MINUTES = 30;
 const MAX_TICKETS_PER_CUSTOMER_EVENT = 10;
@@ -88,6 +88,123 @@ export function isRetryableOrderStatus(status?: string | null) {
   return ["FALHOU", "CANCELADO", "EXPIRADO"].includes(status ?? "");
 }
 
+/**
+ * Finds a payment that already covers customerId+eventId, to avoid creating a duplicate
+ * Pedido/Pagamento for the same purchase. Priority: PAGO first, then an unexpired PENDENTE/PROCESSANDO
+ * attempt. Returns null if neither exists (or exists but expired), meaning it's safe to create a new one.
+ */
+async function findActivePaymentForCustomerEvent(customerId: number, eventId: number, excludeOrderId?: number) {
+  const now = new Date();
+  const pedidoIdExclusion = excludeOrderId ? { not: excludeOrderId } : undefined;
+  const paid = await prisma.pagamento.findFirst({
+    where: { customerId, eventoId: eventId, status: "PAGO", NOT: { pedidoId: null }, pedidoId: pedidoIdExclusion },
+    orderBy: { createdAt: "desc" }
+  });
+  if (paid) {
+    return {
+      orderId: paid.pedidoId as number,
+      paymentId: paid.id,
+      checkoutSessionId: paid.stripeCheckoutSessionId,
+      checkoutUrl: null,
+      status: "PAGO" as const
+    };
+  }
+
+  const pending = await prisma.pagamento.findFirst({
+    where: {
+      customerId,
+      eventoId: eventId,
+      status: { in: ["PENDENTE", "PROCESSANDO"] },
+      expiresAt: { gt: now },
+      NOT: { pedidoId: null },
+      pedidoId: pedidoIdExclusion
+    },
+    orderBy: { createdAt: "desc" }
+  });
+  if (pending) {
+    return {
+      orderId: pending.pedidoId as number,
+      paymentId: pending.id,
+      checkoutSessionId: pending.stripeCheckoutSessionId,
+      checkoutUrl: pending.checkoutUrl,
+      status: pending.status
+    };
+  }
+
+  return null;
+}
+
+function sleep(ms: number) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function paidResultFor(orderId: number) {
+  const paidPayment = await prisma.pagamento.findFirst({ where: { pedidoId: orderId, status: "PAGO" }, orderBy: { createdAt: "desc" } });
+  return {
+    orderId,
+    paymentId: paidPayment?.id ?? null,
+    checkoutSessionId: paidPayment?.stripeCheckoutSessionId ?? null,
+    checkoutUrl: null,
+    status: "PAGO" as const
+  };
+}
+
+/**
+ * Recovers from a lost race on the `uq_pedido_customer_event_active` constraint: a concurrent
+ * call already committed its Pedido for this customerId+eventId (blocking ours), but at the moment
+ * we lost, it may not have created its Pagamento yet (that happens later, after a Stripe round-trip
+ * inside createStripeAttempt) -- so findActivePaymentForCustomerEvent alone can miss it. This looks
+ * up the winning Pedido directly and, if needed, drives it through createStripeAttempt (which is
+ * itself concurrency-safe) to fetch-or-create its checkout attempt. If the winner's own
+ * createStripeAttempt transaction is still in flight, both being Serializable can produce a P2034
+ * write conflict -- that's retried a few times since it resolves as soon as the winner commits.
+ */
+async function recoverWhatsappOrderRace(customerId: number, eventId: number) {
+  const winningOrder = await prisma.pedido.findFirst({
+    where: { customerId, eventId, status: { notIn: ["CANCELADO", "EXPIRADO", "FALHOU"] } },
+    orderBy: { createdAt: "desc" }
+  });
+  if (!winningOrder) return null;
+
+  if (winningOrder.paymentStatus === "PAGO") return paidResultFor(winningOrder.id);
+
+  const MAX_ATTEMPTS = 4;
+  for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+    try {
+      return await createStripeAttempt(winningOrder.id, "WHATSAPP", { customerId });
+    } catch (innerError) {
+      const errorCode = innerError instanceof AppError && innerError.details && typeof innerError.details === "object"
+        ? (innerError.details as { code?: string }).code
+        : undefined;
+
+      if (errorCode === "INVALID_ORDER_STATUS") {
+        const paymentId = (innerError as AppError & { details: { details?: { paymentId?: number } } }).details.details?.paymentId;
+        const activeAttempt = paymentId ? await prisma.pagamento.findUnique({ where: { id: paymentId } }) : null;
+        if (activeAttempt) {
+          return {
+            orderId: winningOrder.id,
+            paymentId: activeAttempt.id,
+            checkoutSessionId: activeAttempt.stripeCheckoutSessionId,
+            checkoutUrl: activeAttempt.checkoutUrl,
+            status: activeAttempt.status
+          };
+        }
+      }
+
+      if (errorCode === "ORDER_ALREADY_PAID") return paidResultFor(winningOrder.id);
+
+      const isWriteConflict = innerError instanceof Prisma.PrismaClientKnownRequestError && innerError.code === "P2034";
+      if (isWriteConflict && attempt < MAX_ATTEMPTS) {
+        await sleep(75 * attempt);
+        continue;
+      }
+
+      throw innerError;
+    }
+  }
+  return null;
+}
+
 async function validateAndRepriceOrder(tx: Prisma.TransactionClient, orderId: number) {
   const now = new Date();
   const order = await tx.pedido.findUnique({
@@ -163,6 +280,16 @@ async function validateAndRepriceOrder(tx: Prisma.TransactionClient, orderId: nu
 }
 
 async function createStripeAttempt(orderId: number, origin: SaleOrigin, actor: PaymentActor) {
+  const orderForDedup = await prisma.pedido.findUnique({ where: { id: orderId } });
+  if (!orderForDedup) throw paymentError("ORDER_NOT_FOUND", "Pedido nao encontrado", 404);
+  if (!actor.admin && (orderForDedup.customerId !== actor.customerId || (actor.userId && orderForDedup.userId !== actor.userId))) {
+    throw paymentError("ORDER_NOT_FOUND", "Pedido nao encontrado", 404);
+  }
+  if (!actor.admin && orderForDedup.eventId) {
+    const existingElsewhere = await findActivePaymentForCustomerEvent(orderForDedup.customerId, orderForDedup.eventId, orderId);
+    if (existingElsewhere) return existingElsewhere;
+  }
+
   const prepared = await prisma.$transaction(async (tx) => {
     const current = await tx.pedido.findUnique({ where: { id: orderId } });
     if (!current) throw paymentError("ORDER_NOT_FOUND", "Pedido nao encontrado", 404);
@@ -412,24 +539,39 @@ export const pagamentosService = {
     });
     const event = await prisma.evento.findUnique({ where: { id: data.eventId } });
     if (!event || event.status !== "ATIVO" || event.data <= new Date()) throw paymentError("EVENT_NOT_AVAILABLE", "Evento indisponivel", 409);
+
+    const existing = await findActivePaymentForCustomerEvent(customer.id, event.id);
+    if (existing) return existing;
+
     const unitAmount = eventPriceInCents(event);
     const totalAmount = unitAmount * data.quantity;
-    const order = await prisma.pedido.create({
-      data: {
-        code: `WPP-${randomUUID().replace(/-/g, "").slice(0, 12).toUpperCase()}`,
-        type: "EVENT",
-        customerId: customer.id,
-        eventId: event.id,
-        status: "PENDENTE",
-        paymentStatus: "PENDENTE",
-        paymentMethod: "STRIPE",
-        total: fromCents(totalAmount),
-        totalAmount,
-        origin: "WHATSAPP",
-        notes: JSON.stringify({ source: "WHATSAPP_CHECKOUT" }),
-        items: { create: [{ eventId: event.id, description: `${event.tipo} - ${event.nome}`, quantity: data.quantity, unitPrice: fromCents(unitAmount), total: fromCents(totalAmount), unitAmount, totalAmount }] }
+    let order;
+    try {
+      order = await prisma.pedido.create({
+        data: {
+          code: `WPP-${randomUUID().replace(/-/g, "").slice(0, 12).toUpperCase()}`,
+          type: "EVENT",
+          customerId: customer.id,
+          eventId: event.id,
+          status: "PENDENTE",
+          paymentStatus: "PENDENTE",
+          paymentMethod: "STRIPE",
+          total: fromCents(totalAmount),
+          totalAmount,
+          origin: "WHATSAPP",
+          notes: JSON.stringify({ source: "WHATSAPP_CHECKOUT" }),
+          items: { create: [{ eventId: event.id, description: `${event.tipo} - ${event.nome}`, quantity: data.quantity, unitPrice: fromCents(unitAmount), total: fromCents(totalAmount), unitAmount, totalAmount }] }
+        }
+      });
+    } catch (error) {
+      // Lost the race to a concurrent call that created its own active Pedido for this customer+event
+      // between our dedup check above and this insert; the DB's partial unique index rejected us.
+      if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2002") {
+        const racedResult = await recoverWhatsappOrderRace(customer.id, event.id);
+        if (racedResult) return racedResult;
       }
-    });
+      throw error;
+    }
     if (totalAmount === 0) {
       try {
         await prisma.$transaction(async (tx) => {
@@ -464,6 +606,47 @@ export const pagamentosService = {
       await prisma.pedido.update({ where: { id: order.id }, data: { status: "FALHOU", paymentStatus: "FALHOU", expiresAt: new Date() } });
       throw error;
     }
+  },
+
+  async integrationPaymentStatus(query: z.infer<typeof paymentStatusQuerySchema>) {
+    const customer = await prisma.customer.findFirst({
+      where: query.customerId ? { id: query.customerId } : { cpf: normalizeCpf(query.cpf!) }
+    });
+    if (!customer) throw paymentError("PAYMENT_NOT_FOUND", "Pagamento nao encontrado", 404);
+
+    const now = new Date();
+    const baseWhere: Prisma.PagamentoWhereInput = { customerId: customer.id, eventoId: query.eventId };
+    const payment =
+      (await prisma.pagamento.findFirst({ where: { ...baseWhere, status: "PAGO" }, orderBy: { createdAt: "desc" } })) ??
+      (await prisma.pagamento.findFirst({
+        where: { ...baseWhere, status: { in: ["PENDENTE", "PROCESSANDO"] }, expiresAt: { gt: now } },
+        orderBy: { createdAt: "desc" }
+      })) ??
+      (await prisma.pagamento.findFirst({ where: baseWhere, orderBy: { createdAt: "desc" } }));
+
+    if (!payment) throw paymentError("PAYMENT_NOT_FOUND", "Pagamento nao encontrado", 404);
+
+    const inscricao = await prisma.inscricao.findFirst({
+      where: {
+        OR: [
+          ...(payment.pedidoId ? [{ orderId: payment.pedidoId }] : []),
+          { customerId: payment.customerId, eventoId: payment.eventoId }
+        ]
+      },
+      orderBy: { createdAt: "desc" }
+    });
+
+    return {
+      paymentId: payment.id,
+      orderId: payment.pedidoId,
+      status: payment.status,
+      checkoutUrl: payment.checkoutUrl,
+      valor: payment.valor,
+      paidAt: payment.paidAt,
+      expiresAt: payment.expiresAt,
+      inscricaoId: inscricao?.id ?? null,
+      inscricaoStatus: inscricao?.status ?? null
+    };
   },
 
   async cancel(id: number, actor: AdminActor, data: z.infer<typeof cancelPaymentSchema>) {

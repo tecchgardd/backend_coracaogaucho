@@ -458,6 +458,7 @@ export const ingressosService = {
       await prisma.loteIngressoAluno.update({ where: { id }, data: { pedidoId } });
     }
     const pagamento = await pagamentosService.createCheckoutForOrder(pedidoId, "PAINEL_ADMIN", { admin: true });
+    if (!pagamento.checkoutUrl) throw new AppError("Nao foi possivel gerar o link de pagamento", 500);
     const checkoutUrl = pagamento.checkoutUrl;
 
     const metadata = tryParseJson(lote.notes);
