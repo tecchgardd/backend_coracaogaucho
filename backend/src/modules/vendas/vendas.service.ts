@@ -42,6 +42,16 @@ function eventLabel(tipo?: string) {
   return "Ingresso de evento";
 }
 
+export function pagamentoBloqueiaExclusaoDeVenda(pagamento: { status: string; stripePaymentIntentId: string | null }): boolean {
+  return ["PAGO", "PARCIALMENTE_ESTORNADO"].includes(pagamento.status) && Boolean(pagamento.stripePaymentIntentId);
+}
+
+export function statusPagamentoAoExcluirVenda(pagamento: { status: string; stripePaymentIntentId: string | null }): "CANCELADO" | "ESTORNADO" | null {
+  if (["PENDENTE", "PROCESSANDO"].includes(pagamento.status)) return "CANCELADO";
+  if (pagamento.status === "PAGO" && !pagamento.stripePaymentIntentId) return "ESTORNADO";
+  return null;
+}
+
 function toVenda(pedido: Prisma.PedidoGetPayload<{ include: ReturnType<typeof includeVenda> }>) {
   const item = pedido.items[0];
   const pagamento = pedido.pagamentos.find((value) => value.status === "PAGO")
