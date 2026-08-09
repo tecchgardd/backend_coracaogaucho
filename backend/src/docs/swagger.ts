@@ -207,9 +207,13 @@ export const swaggerSpec = swaggerJSDoc({
         },
         delete: {
           tags: ["Vendas"],
-          summary: "Cancela venda sem apagar o histórico financeiro",
+          summary: "Cancela a venda e sincroniza ingressos, inscrições e pagamentos vinculados",
           parameters: [{ name: "id", in: "path", required: true, schema: { type: "integer" } }],
-          responses: { "200": { description: "Venda removida" }, "404": { description: "Venda não encontrada" } }
+          responses: {
+            "200": { description: "Venda removida" },
+            "404": { description: "Venda não encontrada" },
+            "409": { description: "Pagamento via Stripe pago precisa ser estornado antes da exclusão" }
+          }
         }
       },
       "/admin/pagamentos": {

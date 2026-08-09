@@ -422,19 +422,35 @@ export const vendasService = {
 
   async remover(id: number) {
     const venda = await this.buscar(id);
-    if (["PAGO", "CORTESIA", "PARCIALMENTE_ESTORNADO", "ESTORNADO"].includes(String(venda.status))) {
-      throw new AppError("Venda com historico financeiro nao pode ser excluida; use cancelamento ou reembolso", 409);
+    const pagamentos = venda.raw.pagamentos;
+    if (pagamentos.some(pagamentoBloqueiaExclusaoDeVenda)) {
+      throw new AppError("Pagamento via Stripe pago precisa ser estornado antes da exclusao; use o fluxo de reembolso", 409);
     }
     return prisma.$transaction(async (tx) => {
-      const pedido = await tx.pedido.update({
+      await tx.pedido.update({
         where: { id },
-        data: { status: "CANCELADO", paymentStatus: "CANCELADO", expiresAt: new Date() },
-        include: includeVenda()
+        data: { status: "CANCELADO", paymentStatus: "CANCELADO", expiresAt: new Date() }
       });
+      await tx.ingresso.updateMany({ where: { orderId: id }, data: { status: "CANCELADO" } });
+      await tx.inscricao.updateMany({ where: { orderId: id }, data: { status: "CANCELADA" } });
+      for (const pagamento of pagamentos) {
+        const novoStatus = statusPagamentoAoExcluirVenda(pagamento);
+        if (novoStatus) await tx.pagamento.update({ where: { id: pagamento.id }, data: { status: novoStatus } });
+      }
       await tx.auditLog.create({
-        data: { action: "VENDA_CANCELADA", entity: "Pedido", entityId: String(id), metadata: { reason: "Cancelamento administrativo pela rota legada" } }
+        data: {
+          action: "VENDA_EXCLUIDA",
+          entity: "Pedido",
+          entityId: String(id),
+          metadata: {
+            ingressoIds: venda.raw.ingressos.map((ingresso) => ingresso.id),
+            inscricaoIds: venda.raw.inscricoes.map((inscricao) => inscricao.id),
+            pagamentoIds: pagamentos.map((pagamento) => pagamento.id)
+          }
+        }
       });
-      return toVenda(pedido);
+      const pedidoAtualizado = await tx.pedido.findUniqueOrThrow({ where: { id }, include: includeVenda() });
+      return toVenda(pedidoAtualizado);
     });
   }
 };
