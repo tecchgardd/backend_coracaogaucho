@@ -7,6 +7,8 @@ test("pagamento Stripe pago ou parcialmente estornado bloqueia exclusao da venda
   const { pagamentoBloqueiaExclusaoDeVenda } = await import("./vendas.service.js");
   assert.equal(pagamentoBloqueiaExclusaoDeVenda({ status: "PAGO", stripePaymentIntentId: "pi_123" }), true);
   assert.equal(pagamentoBloqueiaExclusaoDeVenda({ status: "PARCIALMENTE_ESTORNADO", stripePaymentIntentId: "pi_123" }), true);
+  assert.equal(pagamentoBloqueiaExclusaoDeVenda({ status: "CONTESTADO", stripePaymentIntentId: "pi_123" }), true);
+  assert.equal(pagamentoBloqueiaExclusaoDeVenda({ status: "CONTESTACAO_PERDIDA", stripePaymentIntentId: "pi_123" }), true);
 });
 
 test("pagamento pago sem stripePaymentIntentId nao bloqueia exclusao (manual/externo/cortesia)", async () => {

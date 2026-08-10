@@ -1,6 +1,7 @@
 import { PedidoType, Prisma } from "@prisma/client";
 import { randomUUID } from "node:crypto";
 import { prisma } from "../../lib/prisma.js";
+import { stripe } from "../../lib/stripe.js";
 import { AppError } from "../../utils/http.js";
 import { getPagination } from "../common/schemas.js";
 import { buildPaymentShareText, pagamentosService } from "../pagamentos/pagamentos.service.js";
@@ -43,9 +44,12 @@ function eventLabel(tipo?: string) {
 }
 
 export function pagamentoBloqueiaExclusaoDeVenda(pagamento: { status: string; stripePaymentIntentId: string | null }): boolean {
-  return ["PAGO", "PARCIALMENTE_ESTORNADO"].includes(pagamento.status) && Boolean(pagamento.stripePaymentIntentId);
+  return ["PAGO", "PARCIALMENTE_ESTORNADO", "CONTESTADO", "CONTESTACAO_PERDIDA"].includes(pagamento.status) && Boolean(pagamento.stripePaymentIntentId);
 }
 
+// PARCIALMENTE_ESTORNADO sem stripePaymentIntentId nao ocorre na pratica (todo reembolso
+// parcial passa pela Stripe), mas se ocorrer o pagamento fica intacto: nao ha stripeIntentId
+// para bloquear a exclusao, e nao ha uma transicao de status obvia a aplicar aqui.
 export function statusPagamentoAoExcluirVenda(pagamento: { status: string; stripePaymentIntentId: string | null }): "CANCELADO" | "ESTORNADO" | null {
   if (["PENDENTE", "PROCESSANDO"].includes(pagamento.status)) return "CANCELADO";
   if (pagamento.status === "PAGO" && !pagamento.stripePaymentIntentId) return "ESTORNADO";
@@ -420,37 +424,100 @@ export const vendasService = {
     };
   },
 
-  async remover(id: number) {
+  async remover(id: number, actor: { colaboradorId: number }) {
     const venda = await this.buscar(id);
-    const pagamentos = venda.raw.pagamentos;
-    if (pagamentos.some(pagamentoBloqueiaExclusaoDeVenda)) {
+    const pagamentosIniciais = venda.raw.pagamentos;
+    if (pagamentosIniciais.some(pagamentoBloqueiaExclusaoDeVenda)) {
       throw new AppError("Pagamento via Stripe pago precisa ser estornado antes da exclusao; use o fluxo de reembolso", 409);
     }
+
+    for (const pagamento of pagamentosIniciais) {
+      if (!["PENDENTE", "PROCESSANDO"].includes(pagamento.status)) continue;
+      if (pagamento.stripeCheckoutSessionId) {
+        try {
+          const session = await stripe.checkout.sessions.retrieve(pagamento.stripeCheckoutSessionId);
+          if (session.payment_status === "paid") {
+            throw new AppError("Pagamento via Stripe pago precisa ser estornado antes da exclusao; use o fluxo de reembolso", 409);
+          }
+          if (session.status === "open") await stripe.checkout.sessions.expire(session.id);
+        } catch (error) {
+          if (error instanceof AppError) throw error;
+          throw new AppError("Nao foi possivel expirar a sessao de pagamento", 503);
+        }
+      }
+      if (pagamento.stripePaymentIntentId) {
+        try {
+          const intent = await stripe.paymentIntents.retrieve(pagamento.stripePaymentIntentId);
+          if (intent.status === "succeeded") {
+            throw new AppError("Pagamento via Stripe pago precisa ser estornado antes da exclusao; use o fluxo de reembolso", 409);
+          }
+          if (["requires_payment_method", "requires_confirmation", "requires_action", "requires_capture", "processing"].includes(intent.status)) {
+            await stripe.paymentIntents.cancel(intent.id);
+          }
+        } catch (error) {
+          if (error instanceof AppError) throw error;
+          throw new AppError("Nao foi possivel cancelar o PaymentIntent", 503);
+        }
+      }
+    }
+
     return prisma.$transaction(async (tx) => {
+      const pagamentos = await tx.pagamento.findMany({ where: { pedidoId: id } });
+      if (pagamentos.some(pagamentoBloqueiaExclusaoDeVenda)) {
+        throw new AppError("Pagamento via Stripe pago precisa ser estornado antes da exclusao; use o fluxo de reembolso", 409);
+      }
+
       await tx.pedido.update({
         where: { id },
         data: { status: "CANCELADO", paymentStatus: "CANCELADO", expiresAt: new Date() }
       });
-      await tx.ingresso.updateMany({ where: { orderId: id }, data: { status: "CANCELADO" } });
-      await tx.inscricao.updateMany({ where: { orderId: id }, data: { status: "CANCELADA" } });
+      const { count: ingressosAfetados } = await tx.ingresso.updateMany({
+        where: { orderId: id },
+        data: { status: "CANCELADO", paymentStatus: "CANCELADO" }
+      });
+      const { count: inscricoesAfetadas } = await tx.inscricao.updateMany({ where: { orderId: id }, data: { status: "CANCELADA" } });
+
+      let pagamentosAfetados = 0;
       for (const pagamento of pagamentos) {
         const novoStatus = statusPagamentoAoExcluirVenda(pagamento);
-        if (novoStatus) await tx.pagamento.update({ where: { id: pagamento.id }, data: { status: novoStatus } });
+        if (!novoStatus) continue;
+        const { count } = await tx.pagamento.updateMany({
+          where: { id: pagamento.id, status: pagamento.status },
+          data: { status: novoStatus }
+        });
+        pagamentosAfetados += count;
       }
+
+      const lote = venda.raw.loteIngresso;
+      if (lote) {
+        await tx.loteIngressoAluno.update({
+          where: { id: lote.id },
+          data: { status: "CANCELADO", paymentStatus: "CANCELADO" }
+        });
+        await tx.ingressoAluno.updateMany({
+          where: { loteId: lote.id, status: { not: "UTILIZADO" } },
+          data: { status: "CANCELADO" }
+        });
+      }
+
       await tx.auditLog.create({
         data: {
           action: "VENDA_EXCLUIDA",
           entity: "Pedido",
           entityId: String(id),
+          colaboradorId: actor.colaboradorId,
           metadata: {
-            ingressoIds: venda.raw.ingressos.map((ingresso) => ingresso.id),
-            inscricaoIds: venda.raw.inscricoes.map((inscricao) => inscricao.id),
-            pagamentoIds: pagamentos.map((pagamento) => pagamento.id)
+            ingressosAfetados,
+            inscricoesAfetadas,
+            pagamentosAfetados,
+            pagamentoIds: pagamentos.map((pagamento) => pagamento.id),
+            loteIngressoId: lote?.id
           }
         }
       });
+
       const pedidoAtualizado = await tx.pedido.findUniqueOrThrow({ where: { id }, include: includeVenda() });
       return toVenda(pedidoAtualizado);
-    });
+    }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
   }
 };

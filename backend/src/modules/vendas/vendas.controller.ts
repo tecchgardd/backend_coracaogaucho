@@ -1,4 +1,5 @@
 import type { Request, Response } from "express";
+import { AppError } from "../../utils/http.js";
 import { vendasService } from "./vendas.service.js";
 
 export const vendasController = {
@@ -21,6 +22,7 @@ export const vendasController = {
     res.json(await vendasService.gerarLinkPagamento(Number(req.params.id)));
   },
   async remover(req: Request, res: Response) {
-    res.json(await vendasService.remover(Number(req.params.id)));
+    if (!req.auth) throw new AppError("Nao autenticado", 401);
+    res.json(await vendasService.remover(Number(req.params.id), req.auth));
   }
 };
