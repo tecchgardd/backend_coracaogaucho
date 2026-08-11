@@ -53,10 +53,14 @@ export const ingressoImagemService = {
       }
     });
     if (!pagamento) throw new AppError("Pagamento não encontrado", 404);
+    if (pagamento.status !== "PAGO") throw new AppError("Pagamento ainda nao foi confirmado", 409);
     if (!pagamento.pedido) throw new AppError("Pagamento sem venda vinculada", 404);
 
     const tickets = resolveTickets(pagamento.pedido);
     if (tickets.length === 0) throw new AppError("Nenhum ingresso encontrado para este pagamento", 404);
+    if (tickets.length > 10) {
+      throw new AppError("Lote possui ingressos demais para gerar em uma unica chamada (maximo 10)", 413);
+    }
 
     const resultados: ImagemIngressoResultado[] = [];
     for (const ticket of tickets) {

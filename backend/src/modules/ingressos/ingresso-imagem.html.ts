@@ -117,7 +117,7 @@ ${poster}
 <div><b>Código do ingresso</b><span class="cod">${escapeHtml(dados.codigo)}</span></div>
 </div>
 <div class="entrada">
-<div class="tk-qr"><img src="${dados.qrDataUrl}" alt=""></div>
+<div class="tk-qr"><img src="${escapeHtml(dados.qrDataUrl)}" alt=""></div>
 <div class="aviso-ent"><h4>APRESENTE NA ENTRADA</h4>
 <p>Este QR Code é único e pessoal. Não compartilhe.<br>Obrigatório documento com foto.</p></div>
 </div>

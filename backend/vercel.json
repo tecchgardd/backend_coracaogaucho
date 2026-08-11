@@ -11,6 +11,8 @@
   "functions": {
     "api/index.ts": {
       "maxDuration": 60,
+      "memory": 1600,
+      "includeFiles": "node_modules/@sparticuz/chromium/bin/**",
       "excludeFiles": ".cache/puppeteer/**"
     }
   }
