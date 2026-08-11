@@ -1,5 +1,8 @@
 import type { Request, Response } from "express";
 import { ingressosService } from "./ingressos.service.js";
+import { integrationSecretIsValid } from "../pagamentos/pagamentos.controller.js";
+import { AppError } from "../../utils/http.js";
+import { ingressoImagemService } from "./ingresso-imagem.service.js";
 
 export const ingressosController = {
   async listar(req: Request, res: Response) {
@@ -34,5 +37,12 @@ export const ingressosController = {
   },
   async anexarComprovante(req: Request, res: Response) {
     res.status(201).json(await ingressosService.anexarComprovante(Number(req.params.id), req.file as Express.Multer.File, req.auth?.colaboradorId));
+  },
+  async imagemPorPagamento(req: Request, res: Response) {
+    if (!integrationSecretIsValid(req.get("x-integration-secret"))) {
+      throw new AppError("Integracao nao autorizada", 401, { code: "UNAUTHORIZED_INTEGRATION" });
+    }
+    const data = await ingressoImagemService.gerarImagens(Number(req.params.paymentId));
+    res.json({ success: true, data });
   }
 };

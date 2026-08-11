@@ -69,3 +69,7 @@ export const registrarPagamentoSchema = z.object({
   reason: z.string().optional(),
   notes: z.string().optional()
 });
+
+export const paymentIdParamSchema = z.object({
+  paymentId: z.coerce.number().int().positive()
+});

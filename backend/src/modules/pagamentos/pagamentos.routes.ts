@@ -6,6 +6,8 @@ import { asyncHandler, validate } from "../../utils/http.js";
 import { idParamSchema } from "../common/schemas.js";
 import { pagamentosController } from "./pagamentos.controller.js";
 import { cancelPaymentSchema, checkoutSchema, editPaymentSchema, manualSettlementSchema, orderParamSchema, pagamentoQuerySchema, paymentStatusQuerySchema, refundPaymentSchema, whatsappCheckoutSchema } from "./pagamentos.schemas.js";
+import { ingressosController } from "../ingressos/ingressos.controller.js";
+import { paymentIdParamSchema } from "../ingressos/ingressos.schemas.js";
 
 export const pagamentosRoutes = Router();
 pagamentosRoutes.get("/", validate({ query: pagamentoQuerySchema }), asyncHandler(pagamentosController.listar));
@@ -25,3 +27,4 @@ customerPaymentsRoutes.get("/:orderId/status", validate({ params: orderParamSche
 export const integrationsRoutes = Router();
 integrationsRoutes.post("/whatsapp/checkout", checkoutRateLimit, validate({ body: whatsappCheckoutSchema }), asyncHandler(pagamentosController.whatsappCheckout));
 integrationsRoutes.get("/payment-status", validate({ query: paymentStatusQuerySchema }), asyncHandler(pagamentosController.paymentStatus));
+integrationsRoutes.get("/payments/:paymentId/tickets-image", validate({ params: paymentIdParamSchema }), asyncHandler(ingressosController.imagemPorPagamento));
