@@ -344,6 +344,21 @@ export const swaggerSpec = swaggerJSDoc({
           }
         }
       },
+      "/integrations/payments/{paymentId}/tickets-image": {
+        get: {
+          tags: ["Integrações"],
+          security: [{ integrationSecret: [] }],
+          summary: "Gera a imagem (JPEG) de cada ingresso vinculado a um pagamento confirmado (n8n/WhatsApp)",
+          parameters: [
+            { name: "paymentId", in: "path", required: true, schema: { type: "integer" } }
+          ],
+          responses: {
+            "200": { description: "Lista de imagens geradas, uma por ingresso" },
+            "401": { description: "Integracao nao autorizada" },
+            "404": { description: "Pagamento, venda ou ingressos nao encontrados" }
+          }
+        }
+      },
       "/stripe/webhook": {
         post: { tags: ["Webhooks"], security: [], summary: "Chamado somente pela Stripe; usa corpo bruto e stripe-signature, nunca pelo frontend", parameters: [{ name: "stripe-signature", in: "header", required: true, schema: { type: "string" } }], responses: { "200": { description: "Evento processado, ignorado ou duplicado" }, "400": { description: "Assinatura ausente ou inválida" } } }
       },
