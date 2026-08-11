@@ -25,9 +25,26 @@ let browserPromise: Promise<Browser> | null = null;
 
 async function getBrowser(): Promise<Browser> {
   if (!browserPromise) {
-    browserPromise = resolveLaunchOptions().then((options) => puppeteer.launch(options));
+    browserPromise = resolveLaunchOptions()
+      .then((options) => puppeteer.launch(options))
+      .catch((error) => {
+        // Reset the promise on failure so the next call gets a fresh attempt
+        browserPromise = null;
+        throw error;
+      });
   }
   return browserPromise;
+}
+
+export async function closeBrowser(): Promise<void> {
+  if (browserPromise) {
+    try {
+      const browser = await browserPromise;
+      await browser.close();
+    } finally {
+      browserPromise = null;
+    }
+  }
 }
 
 export async function renderHtmlToJpeg(html: string, width: number): Promise<Buffer> {

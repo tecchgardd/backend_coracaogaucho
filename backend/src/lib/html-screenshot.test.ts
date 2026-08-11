@@ -13,3 +13,8 @@ test("renders a JPEG buffer from a simple HTML string", async () => {
   assert.equal(buffer[0], 0xff);
   assert.equal(buffer[1], 0xd8);
 });
+
+test.after(async () => {
+  const { closeBrowser } = await import("./html-screenshot.js");
+  await closeBrowser();
+});
