@@ -119,7 +119,7 @@ model ConversationMessage {
   createdAt      DateTime               @default(now()) @db.Timestamp(6)
   conversation   Conversation           @relation(fields: [conversationId], references: [id], onDelete: Cascade)
 
-  @@index([conversationId], map: "idx_conversation_message_conversation")
+  @@index([conversationId, createdAt], map: "idx_conversation_message_conversation_created")
   @@map("conversation_message")
 }
 
@@ -169,26 +169,36 @@ Notas de design:
   sub-projeto** — o n8n continua lendo/escrevendo nelas normalmente. Elas só deixam de ser a
   fonte de verdade quando um sub-projeto futuro trocar as tools do n8n para chamar o backend
   em vez de SQL direto.
+- Nenhuma variável de ambiente nova é necessária — este sub-projeto não faz nenhuma chamada
+  externa (nem OpenAI, nem Z-API, nem e-mail); é só schema + um script de leitura/escrita no
+  próprio Postgres já configurado (`DATABASE_URL`/`DIRECT_URL`, já existentes).
 
 ## Migração/backfill do histórico
 
-Script único (`scripts/backfill-conversation-history.mjs` ou similar, rodado manualmente uma
-vez, não uma rota HTTP):
+Script único em `prisma/backfill-conversation-history.ts` (mesmo padrão de `prisma/seed.ts`,
+rodado manualmente uma vez via `npx tsx prisma/backfill-conversation-history.ts`, não uma
+rota HTTP), com um flag `--dry-run` que faz todo o mapeamento e imprime um resumo (quantas
+`Conversation`/`ConversationMessage` seriam criadas, quantos telefones casaram com um
+`Customer`) sem escrever nada — para rodar contra o Postgres de produção (Neon) com segurança
+antes de aplicar de verdade:
 
 1. Agrupar `n8n_chat_histories` por `session_id`.
-2. Para cada `session_id` no formato `whatsapp:<telefone>`:
+2. Ignorar (e logar) qualquer `session_id` que não siga o formato `whatsapp:<dígitos>` — hoje
+   só existe esse formato, mas o script não deve quebrar se aparecer outro no meio.
+3. Para cada `session_id` no formato `whatsapp:<telefone>`:
    - Normalizar o telefone (mesma lógica `normalizarTelefone` já usada nos workflows n8n:
      remove não-dígitos; se tiver ≤11 dígitos, prefixa `55`).
    - Tentar casar com `Customer.telefone` (que hoje é guardado **sem** o prefixo `55` — ver
      amostra real: `Customer.telefone = "48999084537"`, `session_id` gravado como
      `whatsapp:554899084537`). Resolver `customerId` se achar; deixar `null` se não achar.
    - Criar um `Conversation` (`channel: WHATSAPP`, `externalConversationId`: telefone com DDI,
-     `status: CLOSED` — é histórico, não uma conversa ativa).
+     `status: CLOSED`, `lastMessageAt: null` — é histórico e não se sabe o horário real da
+     última mensagem, então não faz sentido preencher com a hora do backfill).
    - Para cada linha de `n8n_chat_histories` daquele `session_id`, ordenada por `id`: criar um
      `ConversationMessage` com `senderType` mapeado de `message.type`
      (`human`→`CUSTOMER`, `ai`→`AI`, `tool`→`SYSTEM`), `content` = `message.content` (string;
      se vier vazio/ausente, usar `""`), `metadata` = o objeto `message` original completo.
-3. **Limitação conhecida, documentada no código**: `n8n_chat_histories` não tem coluna de
+4. **Limitação conhecida, documentada no código**: `n8n_chat_histories` não tem coluna de
    timestamp — só existe o `id` autoincremental. `ConversationMessage.createdAt` para os
    registros migrados não reflete o horário real de envio; a ordem relativa (via `id`
    crescente) é preservada, mas o timestamp absoluto é apenas o momento em que o backfill
@@ -208,11 +218,18 @@ vez, não uma rota HTTP):
 ## Testes
 
 - Migration do Prisma aplica limpo (`prisma migrate dev`) e `prisma validate` passa.
-- Script de backfill, rodado contra os dados reais de teste: confirma que a contagem de
-  `ConversationMessage` criados bate com a contagem de linhas de `n8n_chat_histories`
-  processadas, que a ordem relativa (por `id` de origem) é preservada, e que pelo menos um
-  `Conversation.customerId` foi resolvido corretamente via o telefone de teste conhecido
-  (`554899084537` → customer com `telefone = "48999084537"`).
-- Rodar o script duas vezes não duplica dados (idempotência — checar por
-  `externalConversationId` existente antes de recriar a `Conversation`, e não reprocessar
-  `session_id`s já migrados).
+- Lógica de agrupamento/normalização/mapeamento do backfill (agrupar por `session_id`,
+  normalizar telefone, mapear `message.type`→`senderType`) é extraída em funções puras
+  testáveis sem banco, seguindo o padrão já usado no resto do projeto (funções exportadas e
+  testadas por `node:test`, ver `src/modules/webhooks/webhooks.service.test.ts` como
+  referência) — cobrindo: telefone com/sem prefixo `55`, `session_id` fora do formato
+  esperado (ignorado, não derruba o script), e os três valores de `message.type`.
+- `--dry-run` rodado contra os dados reais de teste: confirma que a contagem de
+  `ConversationMessage` que seriam criadas bate com a contagem de linhas de
+  `n8n_chat_histories` processadas, e que o telefone de teste conhecido
+  (`554899084537` → customer com `telefone = "48999084537"`) resolve para o `customerId`
+  certo.
+- Rodar o script sem `--dry-run` duas vezes seguidas não duplica dados (idempotência —
+  antes de criar, checar se já existe `Conversation` com aquele
+  `(channel: WHATSAPP, externalConversationId)`; se existir, pular aquele `session_id`
+  inteiro em vez de recriar).
