@@ -290,18 +290,18 @@ model Verification {
 }
 
 model Colaborador {
-  id                       Int             @id @default(autoincrement())
+  id                       Int                    @id @default(autoincrement())
   nome                     String
-  cpf                      String          @unique
-  email                    String          @unique
-  role                     UserRole        @default(STAFF)
-  status                   String          @default("ATIVO")
-  userId                   String          @unique
-  customerId               Int?            @unique
-  createdAt                DateTime        @default(now()) @db.Timestamp(6)
-  updatedAt                DateTime        @updatedAt @db.Timestamp(6)
-  user                     User            @relation(fields: [userId], references: [id], onDelete: Restrict)
-  customer                 Customer?       @relation(fields: [customerId], references: [id], onDelete: SetNull, onUpdate: NoAction)
+  cpf                      String                 @unique
+  email                    String                 @unique
+  role                     UserRole               @default(STAFF)
+  status                   String                 @default("ATIVO")
+  userId                   String                 @unique
+  customerId               Int?                   @unique
+  createdAt                DateTime               @default(now()) @db.Timestamp(6)
+  updatedAt                DateTime               @updatedAt @db.Timestamp(6)
+  user                     User                   @relation(fields: [userId], references: [id], onDelete: Restrict)
+  customer                 Customer?              @relation(fields: [customerId], references: [id], onDelete: SetNull, onUpdate: NoAction)
   auditLogs                AuditLog[]
   validacoes               Ingresso[]
   validacoesIngressosAluno IngressoAluno[]
@@ -722,23 +722,23 @@ enum ConversationSenderType {
 }
 
 model Conversation {
-  id                     Int                    @id @default(autoincrement())
+  id                     Int                   @id @default(autoincrement())
   customerId             Int?
   channel                ConversationChannel
   externalConversationId String
-  status                 ConversationStatus     @default(OPEN)
-  ownerType              ConversationOwnerType  @default(NONE)
+  status                 ConversationStatus    @default(OPEN)
+  ownerType              ConversationOwnerType @default(NONE)
   ownerId                Int?
-  aiEnabled              Boolean                @default(true)
-  createdAt              DateTime               @default(now()) @db.Timestamp(6)
-  updatedAt              DateTime               @updatedAt @db.Timestamp(6)
-  lastMessageAt          DateTime?              @db.Timestamp(6)
-  queuedAt               DateTime?              @db.Timestamp(6)
-  humanAssignedAt         DateTime?              @db.Timestamp(6)
-  closedAt               DateTime?              @db.Timestamp(6)
-  pendingAiReplyAt       DateTime?              @db.Timestamp(6)
-  customer               Customer?              @relation(fields: [customerId], references: [id], onDelete: SetNull)
-  owner                  Colaborador?           @relation(fields: [ownerId], references: [id], onDelete: SetNull)
+  aiEnabled              Boolean               @default(true)
+  createdAt              DateTime              @default(now()) @db.Timestamp(6)
+  updatedAt              DateTime              @updatedAt @db.Timestamp(6)
+  lastMessageAt          DateTime?             @db.Timestamp(6)
+  queuedAt               DateTime?             @db.Timestamp(6)
+  humanAssignedAt        DateTime?             @db.Timestamp(6)
+  closedAt               DateTime?             @db.Timestamp(6)
+  pendingAiReplyAt       DateTime?             @db.Timestamp(6)
+  customer               Customer?             @relation(fields: [customerId], references: [id], onDelete: SetNull)
+  owner                  Colaborador?          @relation(fields: [ownerId], references: [id], onDelete: SetNull)
   messages               ConversationMessage[]
 
   @@unique([channel, externalConversationId], name: "channel_externalConversationId")

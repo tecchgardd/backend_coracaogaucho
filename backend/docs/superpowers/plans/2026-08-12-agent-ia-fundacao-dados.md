@@ -144,6 +144,8 @@ Expected: `The schema at prisma/schema.prisma is valid 🚀` (or equivalent succ
 Run: `npx prisma migrate dev --name add_agent_ia_conversation_foundation`
 Expected: Prisma creates a new folder under `prisma/migrations/` named `<timestamp>_add_agent_ia_conversation_foundation`, applies it to the database configured in `.env` (`DATABASE_URL`), and prints `Your database is now in sync with your schema.` Inspect the generated `migration.sql` file it created — confirm it only contains `CREATE TYPE`/`CREATE TABLE`/`ALTER TABLE ... ADD COLUMN` statements for the new enums/models/relations above, and does **not** touch `n8n_chat_histories`, `regras_agentes`, or any other existing table beyond adding the new nullable FK columns to `customer`/`colaborador` (Prisma won't need to touch those tables at all for a new reverse relation — only the `conversation`/`conversation_message`/`ai_rule` tables and their FKs should appear).
 
+**Note (added after implementation): do not run this against the shared database configured in this repo's .env — see `prisma/migrations_archive/README.md`. Use `prisma migrate deploy` for any future migration in this repo.**
+
 - [ ] **Step 5: Generate the Prisma client and typecheck**
 
 Run: `npx prisma generate`
