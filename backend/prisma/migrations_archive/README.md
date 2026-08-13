@@ -28,3 +28,9 @@ real database's schema directly, replaced this history as the new starting point
 - **A genuinely fresh, empty database** (CI, a new developer's first local setup) just needs
   `prisma migrate deploy` — it will run `0_baseline` for real (creating everything from
   scratch) followed by any migrations added since, no special handling needed.
+- **Never edit `prisma/migrations/0_baseline/migration.sql` after the fact.**
+  `prisma migrate resolve --applied 0_baseline` recorded a checksum of that file's exact
+  content in production's `_prisma_migrations` table. Editing it later makes `migrate deploy`
+  fail against production with a checksum mismatch. If something the baseline captured turns
+  out to be wrong or incomplete, fix it with a **new** migration folder instead (see
+  `20260813000000_restore_pedido_active_unique_index` for an example of exactly this).

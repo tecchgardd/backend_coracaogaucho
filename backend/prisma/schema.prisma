@@ -125,6 +125,10 @@ model Inscricao {
   orderId                       Int?
   order                         Pedido?             @relation(fields: [orderId], references: [id], onDelete: SetNull)
 
+  // Duas constraints unicas identicas ([customerId, eventoId]) existem de verdade no banco --
+  // redundante, mas preservado aqui (em vez de descartar uma) para nao propor DROP CONSTRAINT
+  // sem entender por que as duas foram criadas historicamente.
+  @@unique([customerId, eventoId])
   @@unique([customerId, eventoId], map: "inscricao_customer_evento_unique")
   @@index([customerId], map: "idx_inscricao_customer")
   @@index([eventoId], map: "idx_inscricao_evento")
@@ -168,6 +172,23 @@ model Pagamento {
   statusBeforeDispute     PagamentoStatus?
   createdAt               DateTime         @default(now()) @db.Timestamp(6)
   updatedAt               DateTime         @default(now()) @db.Timestamp(6)
+  // Colunas legadas de uma versao anterior deste model, de antes da venda ser modelada via
+  // Pedido/PedidoItem. Nao lidas nem escritas pelo codigo atual deste backend -- mantidas
+  // aqui so para o schema nao divergir do banco real (evita que um `prisma migrate dev`
+  // futuro proponha DROP COLUMN contra dados historicos).
+  tipo                    String?
+  modo                    String?
+  cpf                     String?
+  nome                    String?
+  email                   String?
+  telefone                String?
+  quantidade              Int?             @default(1)
+  valorUnitario           Decimal?         @default(0) @db.Decimal(12, 2)
+  valorTotal              Decimal?         @default(0) @db.Decimal(12, 2)
+  moeda                   String?          @default("brl")
+  checkoutId              String?
+  paymentIntentId         String?
+  paymentUrl              String?
   customer                Customer         @relation(fields: [customerId], references: [id], onDelete: NoAction, onUpdate: NoAction)
   evento                  Evento           @relation(fields: [eventoId], references: [id], onDelete: NoAction, onUpdate: NoAction)
   inscricao               Inscricao?       @relation(fields: [inscricaoId], references: [id], onDelete: Cascade, onUpdate: NoAction)
@@ -184,6 +205,9 @@ model Pagamento {
   @@index([inscricaoId], map: "idx_pagamento_inscricao")
   @@index([provider, status], map: "idx_pagamento_provider_status")
   @@index([method], map: "idx_pagamento_method")
+  @@index([checkoutId], map: "pagamento_checkout_idx")
+  @@index([eventoId, cpf], map: "pagamento_evento_cpf_idx")
+  @@index([eventoId, customerId], map: "pagamento_evento_customer_idx")
   @@map("pagamento")
 }
 
@@ -221,6 +245,71 @@ model RegrasAgentes {
   @@index([ativo], map: "idx_regras_ativo")
   @@index([tipo], map: "idx_regras_tipo")
   @@map("regras_agentes")
+}
+
+// As 4 tabelas abaixo (AtendimentoStaffLock, RepescagemAtendimento, RepescagemLog,
+// SyncGoogleSheetsConfig) sao, como N8nChatHistory/RegrasAgentes acima, geridas pela
+// automacao n8n externa, nao por codigo deste backend. Modeladas aqui apenas para que
+// `prisma/migrations/` continue descrevendo o banco real por completo -- sem isso, um
+// `prisma migrate dev` rodado no futuro proporia DROP TABLE nelas.
+model AtendimentoStaffLock {
+  telefone            String   @id
+  bloqueadoAte        DateTime @map("bloqueado_ate") @db.Timestamptz(6)
+  ultimaMensagemStaff String?  @map("ultima_mensagem_staff")
+  atualizadoEm        DateTime @default(now()) @map("atualizado_em") @db.Timestamptz(6)
+
+  @@map("atendimento_staff_lock")
+}
+
+model RepescagemAtendimento {
+  id                    BigInt          @id @default(autoincrement())
+  sessionId             String          @unique @map("session_id")
+  telefone              String
+  nome                  String?
+  cpf                   String?
+  cidade                String?
+  assunto               String          @default("GERAL")
+  etapa                 String          @default("EM_ATENDIMENTO")
+  resumo                String?
+  ultimaMensagemCliente String?         @map("ultima_mensagem_cliente")
+  ultimaInteracao       DateTime        @default(now()) @map("ultima_interacao") @db.Timestamptz(6)
+  status                String          @default("ABERTO")
+  convertido            Boolean         @default(false)
+  followupsEnviados     Int             @default(0) @map("followups_enviados")
+  ultimoFollowup        DateTime?       @map("ultimo_followup") @db.Timestamptz(6)
+  respondeuAposFollowup Boolean         @default(false) @map("respondeu_apos_followup")
+  eventoId              Int?            @map("evento_id")
+  origem                String          @default("WHATSAPP")
+  metadata              Json            @default("{}")
+  criadoEm              DateTime        @default(now()) @map("criado_em") @db.Timestamptz(6)
+  atualizadoEm          DateTime        @default(now()) @map("atualizado_em") @db.Timestamptz(6)
+  logs                  RepescagemLog[]
+
+  @@map("repescagem_atendimento")
+}
+
+model RepescagemLog {
+  id             BigInt                 @id @default(autoincrement())
+  atendimentoId  BigInt?                @map("atendimento_id")
+  telefone       String
+  tipo           String
+  mensagem       String?
+  motivo         String?
+  nivelInteresse String?                @map("nivel_interesse")
+  dados          Json                   @default("{}")
+  criadoEm       DateTime               @default(now()) @map("criado_em") @db.Timestamptz(6)
+  atendimento    RepescagemAtendimento? @relation(fields: [atendimentoId], references: [id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@map("repescagem_log")
+}
+
+model SyncGoogleSheetsConfig {
+  chave         String    @id
+  spreadsheetId String    @map("spreadsheet_id")
+  createdAt     DateTime? @default(now()) @map("created_at") @db.Timestamp(6)
+  updatedAt     DateTime? @default(now()) @map("updated_at") @db.Timestamp(6)
+
+  @@map("sync_google_sheets_config")
 }
 
 model User {

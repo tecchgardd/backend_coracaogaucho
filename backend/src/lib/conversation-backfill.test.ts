@@ -8,7 +8,8 @@ import {
   mapSenderType,
   extractContent,
   groupBySession,
-  planConversations
+  planConversations,
+  findSkippedSessionIds
 } from "./conversation-backfill.js";
 
 test("parseWhatsappSessionId extracts digits from a whatsapp session id", () => {
@@ -45,6 +46,18 @@ test("resolveCustomerId matches when the customer record has no 9th digit either
 test("resolveCustomerId returns null when no customer matches", () => {
   assert.equal(resolveCustomerId("554899084537", []), null);
   assert.equal(resolveCustomerId("554899084537", [{ id: 1, telefone: "11222223333" }]), null);
+});
+
+test("resolveCustomerId returns null when the phone is ambiguous between two customers", () => {
+  const customers = [
+    { id: 1, telefone: "4899084537" },
+    { id: 2, telefone: "48999084537" }
+  ];
+  assert.equal(resolveCustomerId("554899084537", customers), null);
+});
+
+test("phoneWithoutCountryCode does not strip an 11-digit number in DDD 55 (Santa Maria/RS)", () => {
+  assert.equal(phoneWithoutCountryCode("55999084537"), "55999084537");
 });
 
 test("mapSenderType maps human/ai to CUSTOMER/AI and anything else to SYSTEM", () => {
@@ -99,4 +112,19 @@ test("planConversations preserves message order and maps sender types", () => {
     ]
   );
   assert.deepEqual(conv.messages[0].metadata, { type: "human", content: "pergunta" });
+});
+
+test("findSkippedSessionIds reports distinct session ids that don't match the whatsapp:<digits> format", () => {
+  const rows = [
+    { id: 1, sessionId: "whatsapp:554899084537", message: { type: "human", content: "oi" } },
+    { id: 2, sessionId: "email:x@example.com", message: { type: "human", content: "oi" } },
+    { id: 3, sessionId: "email:x@example.com", message: { type: "human", content: "oi de novo" } },
+    { id: 4, sessionId: "whatsapp:+5548999999999", message: { type: "human", content: "oi" } }
+  ];
+  assert.deepEqual(findSkippedSessionIds(rows), ["email:x@example.com", "whatsapp:+5548999999999"]);
+});
+
+test("findSkippedSessionIds returns an empty array when every session id matches", () => {
+  const rows = [{ id: 1, sessionId: "whatsapp:554899084537", message: { type: "human", content: "oi" } }];
+  assert.deepEqual(findSkippedSessionIds(rows), []);
 });

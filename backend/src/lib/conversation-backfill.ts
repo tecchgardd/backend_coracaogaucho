@@ -46,8 +46,11 @@ export function candidatePhoneVariants(digitsWithoutDdi: string): string[] {
 export function resolveCustomerId(phoneWithDdi: string, customers: CustomerPhoneRecord[]): number | null {
   const withoutDdi = phoneWithoutCountryCode(phoneWithDdi);
   const variants = new Set(candidatePhoneVariants(withoutDdi));
-  const match = customers.find((c) => variants.has(c.telefone.replace(/\D/g, "")));
-  return match ? match.id : null;
+  const matches = customers.filter((c) => variants.has(c.telefone.replace(/\D/g, "")));
+  // Only bind when exactly one customer matches. candidatePhoneVariants widens the match set
+  // to cover the 9th-digit ambiguity, which raises the chance two different customers'
+  // numbers collide -- an arbitrary pick would attach history to the wrong person.
+  return matches.length === 1 ? matches[0].id : null;
 }
 
 export function mapSenderType(messageType: unknown): ConversationSenderTypeValue {
@@ -94,4 +97,19 @@ export function planConversations(rows: N8nChatHistoryRow[]): PlannedConversatio
     planned.push({ sessionId, phoneWithDdi, messages });
   }
   return planned;
+}
+
+// Distinct session_ids that planConversations silently drops because they don't match the
+// whatsapp:<digits> format. A data migration must report what it declined to process instead
+// of just reporting success on whatever it did handle.
+export function findSkippedSessionIds(rows: N8nChatHistoryRow[]): string[] {
+  const seen = new Set<string>();
+  const skipped: string[] = [];
+  for (const row of rows) {
+    if (parseWhatsappSessionId(row.sessionId)) continue;
+    if (seen.has(row.sessionId)) continue;
+    seen.add(row.sessionId);
+    skipped.push(row.sessionId);
+  }
+  return skipped;
 }

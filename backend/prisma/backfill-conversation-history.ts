@@ -1,15 +1,20 @@
 import "dotenv/config";
 import { Prisma } from "@prisma/client";
 import { prisma } from "../src/lib/prisma.js";
-import { planConversations, resolveCustomerId } from "../src/lib/conversation-backfill.js";
+import { planConversations, resolveCustomerId, findSkippedSessionIds } from "../src/lib/conversation-backfill.js";
 
 const DRY_RUN = process.argv.includes("--dry-run");
 
 async function main() {
-  const rows = await prisma.n8nChatHistory.findMany({ orderBy: { id: "asc" } });
-  const planned = planConversations(
-    rows.map((row) => ({ id: row.id, sessionId: row.sessionId, message: row.message }))
-  );
+  const rawRows = await prisma.n8nChatHistory.findMany({ orderBy: { id: "asc" } });
+  const rows = rawRows.map((row) => ({ id: row.id, sessionId: row.sessionId, message: row.message }));
+  const planned = planConversations(rows);
+
+  const skippedSessionIds = findSkippedSessionIds(rows);
+  if (skippedSessionIds.length > 0) {
+    console.log(`Ignorando ${skippedSessionIds.length} session_id(s) fora do formato whatsapp:<digitos>:`);
+    for (const sessionId of skippedSessionIds) console.log(`  - ${sessionId}`);
+  }
 
   if (planned.length === 0) {
     console.log("Nenhuma sessao whatsapp:<telefone> encontrada em n8n_chat_histories. Nada a fazer.");
@@ -59,7 +64,10 @@ async function main() {
           create: conversation.messages.map((message) => ({
             senderType: message.senderType,
             content: message.content,
-            metadata: message.metadata as Prisma.InputJsonValue
+            // message.metadata is a JSONB column value read back from n8n_chat_histories.message
+            // (NOT NULL there), but Prisma's JSON scalar rejects a bare JS `null` for a nullable
+            // Json field -- it must be the sentinel Prisma.JsonNull instead.
+            metadata: (message.metadata === null ? Prisma.JsonNull : message.metadata) as Prisma.InputJsonValue
           }))
         }
       }
