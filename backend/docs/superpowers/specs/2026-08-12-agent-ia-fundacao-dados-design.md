@@ -186,11 +186,18 @@ antes de aplicar de verdade:
 2. Ignorar (e logar) qualquer `session_id` que não siga o formato `whatsapp:<dígitos>` — hoje
    só existe esse formato, mas o script não deve quebrar se aparecer outro no meio.
 3. Para cada `session_id` no formato `whatsapp:<telefone>`:
-   - Normalizar o telefone (mesma lógica `normalizarTelefone` já usada nos workflows n8n:
-     remove não-dígitos; se tiver ≤11 dígitos, prefixa `55`).
-   - Tentar casar com `Customer.telefone` (que hoje é guardado **sem** o prefixo `55` — ver
-     amostra real: `Customer.telefone = "48999084537"`, `session_id` gravado como
-     `whatsapp:554899084537`). Resolver `customerId` se achar; deixar `null` se não achar.
+   - Extrair os dígitos do `session_id` (formato `whatsapp:<dígitos>`) e remover o prefixo
+     `55`, já que `Customer.telefone` é guardado sem DDI (amostra real confirmada em produção:
+     `session_id = whatsapp:554899084537` → `Customer.telefone = "48999084537"`).
+   - **Dígito 9 do celular**: mesmo depois de tirar o `55`, os dois números não batem
+     caractere a caractere. `session_id` sem o `55` dá `4899084537` (10 dígitos, DDD + 8
+     dígitos); `Customer.telefone` é `48999084537` (11 dígitos, DDD + **9** + 8 dígitos) — o
+     nono dígito do celular está presente num lado e ausente no outro (confirmado comparando
+     os dois valores reais direto no banco nesta sessão). O casamento precisa tentar as duas
+     formas: comparar como veio, **e** comparar inserindo/removendo o `9` logo após o DDD
+     (2 primeiros dígitos) quando um lado tem 10 dígitos e o outro 11.
+   - Resolver `customerId` se achar por qualquer uma das duas formas; deixar `null` se não
+     achar em nenhuma.
    - Criar um `Conversation` (`channel: WHATSAPP`, `externalConversationId`: telefone com DDI,
      `status: CLOSED`, `lastMessageAt: null` — é histórico e não se sabe o horário real da
      última mensagem, então não faz sentido preencher com a hora do backfill).
@@ -222,8 +229,9 @@ antes de aplicar de verdade:
   normalizar telefone, mapear `message.type`→`senderType`) é extraída em funções puras
   testáveis sem banco, seguindo o padrão já usado no resto do projeto (funções exportadas e
   testadas por `node:test`, ver `src/modules/webhooks/webhooks.service.test.ts` como
-  referência) — cobrindo: telefone com/sem prefixo `55`, `session_id` fora do formato
-  esperado (ignorado, não derruba o script), e os três valores de `message.type`.
+  referência) — cobrindo: telefone com/sem prefixo `55`, telefone com/sem o nono dígito do
+  celular, `session_id` fora do formato esperado (ignorado, não derruba o script), e os três
+  valores de `message.type`.
 - `--dry-run` rodado contra os dados reais de teste: confirma que a contagem de
   `ConversationMessage` que seriam criadas bate com a contagem de linhas de
   `n8n_chat_histories` processadas, e que o telefone de teste conhecido
