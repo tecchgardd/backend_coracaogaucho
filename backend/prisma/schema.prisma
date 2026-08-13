@@ -31,6 +31,7 @@ model Customer {
   colaborador    Colaborador?
   pedidos        Pedido[]
   lotesIngressos LoteIngressoAluno[]
+  conversations  Conversation[]
   userId         String?             @unique
   user           User?               @relation(fields: [userId], references: [id], onDelete: SetNull)
 
@@ -304,6 +305,14 @@ model Colaborador {
   auditLogs                AuditLog[]
   validacoes               Ingresso[]
   validacoesIngressosAluno IngressoAluno[]
+  conversations            Conversation[]
+  agentConfigsUpdated      AgentConfig[]
+  aiKnowledgeApproved      AiKnowledge[]
+  aiLearningReviewed       AiLearningSuggestion[]
+  aiPromptsCreated         AiPrompt[]             @relation("AiPromptCreatedBy")
+  aiPromptsUpdated         AiPrompt[]             @relation("AiPromptUpdatedBy")
+  aiRulesCreated           AiRule[]               @relation("AiRuleCreatedBy")
+  aiRulesUpdated           AiRule[]               @relation("AiRuleUpdatedBy")
 
   @@index([role])
   @@index([status])
@@ -681,4 +690,183 @@ enum IngressoAlunoStatus {
 enum IngressoAlunoTipo {
   NORMAL
   CORTESIA
+}
+
+enum ConversationChannel {
+  WHATSAPP
+  EMAIL
+  INSTAGRAM
+  FACEBOOK
+  WEBSITE
+}
+
+enum ConversationStatus {
+  OPEN
+  AI
+  QUEUE
+  HUMAN
+  CLOSED
+}
+
+enum ConversationOwnerType {
+  AI
+  HUMAN
+  NONE
+}
+
+enum ConversationSenderType {
+  CUSTOMER
+  AI
+  HUMAN
+  SYSTEM
+}
+
+model Conversation {
+  id                     Int                    @id @default(autoincrement())
+  customerId             Int?
+  channel                ConversationChannel
+  externalConversationId String
+  status                 ConversationStatus     @default(OPEN)
+  ownerType              ConversationOwnerType  @default(NONE)
+  ownerId                Int?
+  aiEnabled              Boolean                @default(true)
+  createdAt              DateTime               @default(now()) @db.Timestamp(6)
+  updatedAt              DateTime               @updatedAt @db.Timestamp(6)
+  lastMessageAt          DateTime?              @db.Timestamp(6)
+  queuedAt               DateTime?              @db.Timestamp(6)
+  humanAssignedAt         DateTime?              @db.Timestamp(6)
+  closedAt               DateTime?              @db.Timestamp(6)
+  pendingAiReplyAt       DateTime?              @db.Timestamp(6)
+  customer               Customer?              @relation(fields: [customerId], references: [id], onDelete: SetNull)
+  owner                  Colaborador?           @relation(fields: [ownerId], references: [id], onDelete: SetNull)
+  messages               ConversationMessage[]
+
+  @@unique([channel, externalConversationId], name: "channel_externalConversationId")
+  @@index([channel], map: "idx_conversation_channel")
+  @@index([customerId], map: "idx_conversation_customer")
+  @@index([ownerType], map: "idx_conversation_owner_type")
+  @@index([pendingAiReplyAt], map: "idx_conversation_pending_reply")
+  @@index([status], map: "idx_conversation_status")
+  @@map("conversation")
+}
+
+model ConversationMessage {
+  id             Int                    @id @default(autoincrement())
+  conversationId Int
+  senderType     ConversationSenderType
+  senderId       Int?
+  content        String
+  metadata       Json?
+  createdAt      DateTime               @default(now()) @db.Timestamp(6)
+  conversation   Conversation           @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+
+  @@index([conversationId, createdAt], map: "idx_conversation_message_conversation_created")
+  @@map("conversation_message")
+}
+
+model AiRule {
+  id                   Int          @id @default(autoincrement())
+  name                 String
+  description          String?
+  category             String       @default("GERAL")
+  content              String
+  priority             Int          @default(5)
+  status               String       @default("ATIVO")
+  createdBy            Int?
+  updatedBy            Int?
+  createdAt            DateTime     @default(now()) @db.Timestamp(6)
+  updatedAt            DateTime     @updatedAt @db.Timestamp(6)
+  createdByColaborador Colaborador? @relation("AiRuleCreatedBy", fields: [createdBy], references: [id])
+  updatedByColaborador Colaborador? @relation("AiRuleUpdatedBy", fields: [updatedBy], references: [id])
+
+  @@index([createdBy])
+  @@index([updatedBy])
+  @@index([status], map: "idx_ai_rule_status")
+  @@map("ai_rule")
+}
+
+enum FirstResponseMode {
+  INSTANT
+  DELAYED
+}
+
+model AgentConfig {
+  id                        Int               @id @default(autoincrement())
+  aiEnabled                 Boolean           @default(true)
+  firstResponseMode         FirstResponseMode @default(INSTANT)
+  firstResponseDelaySeconds Int               @default(0)
+  humanQueueSlaSeconds      Int               @default(600)
+  updatedById               Int?
+  createdAt                 DateTime          @default(now()) @db.Timestamp(6)
+  updatedAt                 DateTime          @updatedAt @db.Timestamp(6)
+  updatedBy                 Colaborador?      @relation(fields: [updatedById], references: [id])
+
+  @@map("agent_config")
+}
+
+model AgentChannelConfig {
+  id        Int                 @id @default(autoincrement())
+  channel   ConversationChannel @unique
+  enabled   Boolean             @default(false)
+  provider  String?
+  createdAt DateTime            @default(now()) @db.Timestamp(6)
+  updatedAt DateTime            @updatedAt @db.Timestamp(6)
+
+  @@map("agent_channel_config")
+}
+
+model AiKnowledge {
+  id           Int          @id @default(autoincrement())
+  title        String
+  content      String
+  type         String
+  source       String?
+  status       String       @default("ATIVO")
+  approvedById Int?
+  createdAt    DateTime     @default(now()) @db.Timestamp(6)
+  updatedAt    DateTime     @updatedAt @db.Timestamp(6)
+  approvedBy   Colaborador? @relation(fields: [approvedById], references: [id])
+
+  @@index([status])
+  @@index([type])
+  @@map("ai_knowledge")
+}
+
+model AiLearningSuggestion {
+  id            Int          @id @default(autoincrement())
+  title         String
+  description   String
+  source        String?
+  occurrences   Int          @default(1)
+  suggestedType String?
+  status        String       @default("PENDENTE")
+  reviewedById  Int?
+  reviewedAt    DateTime?    @db.Timestamp(6)
+  createdAt     DateTime     @default(now()) @db.Timestamp(6)
+  updatedAt     DateTime     @updatedAt @db.Timestamp(6)
+  reviewedBy    Colaborador? @relation(fields: [reviewedById], references: [id])
+
+  @@index([status])
+  @@map("ai_learning_suggestion")
+}
+
+model AiPrompt {
+  id          Int          @id @default(autoincrement())
+  name        String
+  description String?
+  content     String
+  tone        String?
+  scope       String?
+  status      String       @default("ATIVO")
+  version     Int          @default(1)
+  createdById Int?
+  updatedById Int?
+  createdAt   DateTime     @default(now()) @db.Timestamp(6)
+  updatedAt   DateTime     @updatedAt @db.Timestamp(6)
+  createdBy   Colaborador? @relation("AiPromptCreatedBy", fields: [createdById], references: [id])
+  updatedBy   Colaborador? @relation("AiPromptUpdatedBy", fields: [updatedById], references: [id])
+
+  @@index([scope])
+  @@index([status])
+  @@map("ai_prompt")
 }
