@@ -20,6 +20,7 @@ import { empresasRoutes } from "../modules/empresas/empresas.routes.js";
 import { publicRoutes } from "../modules/public/public.routes.js";
 import { meRoutes } from "../modules/me/me.routes.js";
 import { customerAuthRoutes } from "../modules/customer-auth/customer-auth.routes.js";
+import { agenteIaRoutes } from "../modules/agente-ia/agente-ia.routes.js";
 import { env } from "../env.js";
 
 export const routes = Router();
@@ -46,4 +47,5 @@ routes.use("/admin/fotos", authMiddleware, requireRoles("ADMIN", "STAFF"), fotos
 routes.use("/admin/empresas", authMiddleware, requireRoles("ADMIN", "STAFF"), empresasRoutes);
 routes.use("/admin/pessoas", authMiddleware, requireRoles("ADMIN", "STAFF"), pessoasRoutes);
 routes.use("/admin/vendas", authMiddleware, requireRoles("ADMIN", "STAFF"), vendasRoutes);
+routes.use("/admin/agent", authMiddleware, requireRoles("ADMIN", "STAFF"), agenteIaRoutes);
 routes.use("/uploads", authMiddleware, requireRoles("ADMIN", "STAFF"), uploadsRoutes);

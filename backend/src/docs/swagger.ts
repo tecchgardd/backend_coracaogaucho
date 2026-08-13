@@ -362,6 +362,68 @@ export const swaggerSpec = swaggerJSDoc({
       "/stripe/webhook": {
         post: { tags: ["Webhooks"], security: [], summary: "Chamado somente pela Stripe; usa corpo bruto e stripe-signature, nunca pelo frontend", parameters: [{ name: "stripe-signature", in: "header", required: true, schema: { type: "string" } }], responses: { "200": { description: "Evento processado, ignorado ou duplicado" }, "400": { description: "Assinatura ausente ou inválida" } } }
       },
+      "/admin/agent/config": {
+        get: {
+          tags: ["Agente IA - Configuração"],
+          security: [{ cookieAuth: [] }],
+          summary: "Busca a configuração global do Agent IA (cria a linha padrão se ainda não existir)",
+          responses: { "200": { description: "Configuração atual" }, "401": { description: "Não autenticado" } }
+        },
+        patch: {
+          tags: ["Agente IA - Configuração"],
+          security: [{ cookieAuth: [] }],
+          summary: "Atualiza campos da configuração global do Agent IA",
+          requestBody: {
+            content: {
+              "application/json": {
+                schema: {
+                  type: "object",
+                  properties: {
+                    aiEnabled: { type: "boolean" },
+                    firstResponseMode: { type: "string", enum: ["INSTANT", "DELAYED"] },
+                    firstResponseDelaySeconds: { type: "integer", minimum: 0 },
+                    humanQueueSlaSeconds: { type: "integer", minimum: 1 }
+                  }
+                }
+              }
+            }
+          },
+          responses: { "200": { description: "Configuração atualizada" }, "401": { description: "Não autenticado" } }
+        }
+      },
+      "/admin/agent/status": {
+        patch: {
+          tags: ["Agente IA - Configuração"],
+          security: [{ cookieAuth: [] }],
+          summary: "Liga ou desliga o Agent IA globalmente (somente ADMIN)",
+          requestBody: {
+            required: true,
+            content: { "application/json": { schema: { type: "object", required: ["enabled"], properties: { enabled: { type: "boolean" } } } } }
+          },
+          responses: { "200": { description: "Configuração atualizada" }, "401": { description: "Não autenticado" }, "403": { description: "Somente ADMIN" } }
+        }
+      },
+      "/admin/agent/channels": {
+        get: {
+          tags: ["Agente IA - Configuração"],
+          security: [{ cookieAuth: [] }],
+          summary: "Lista o estado do Agent IA para os 5 canais suportados",
+          responses: { "200": { description: "Lista com as 5 configurações de canal" }, "401": { description: "Não autenticado" } }
+        }
+      },
+      "/admin/agent/channels/{channel}": {
+        patch: {
+          tags: ["Agente IA - Configuração"],
+          security: [{ cookieAuth: [] }],
+          summary: "Ativa ou desativa o Agent IA para um canal específico",
+          parameters: [{ name: "channel", in: "path", required: true, schema: { type: "string", enum: ["WHATSAPP", "EMAIL", "INSTAGRAM", "FACEBOOK", "WEBSITE"] } }],
+          requestBody: {
+            required: true,
+            content: { "application/json": { schema: { type: "object", required: ["enabled"], properties: { enabled: { type: "boolean" } } } } }
+          },
+          responses: { "200": { description: "Configuração de canal atualizada" }, "401": { description: "Não autenticado" } }
+        }
+      },
       "/uploads/image": {
         post: {
           tags: ["Uploads"],
