@@ -10,6 +10,8 @@ import { agentRulesController } from "./agent-rules.controller.js";
 import { ruleCreateSchema, ruleQuerySchema, ruleStatusSchema, ruleUpdateSchema } from "./agent-rules.schemas.js";
 import { agentPromptsController } from "./agent-prompts.controller.js";
 import { promptCreateSchema, promptQuerySchema, promptStatusSchema, promptUpdateSchema } from "./agent-prompts.schemas.js";
+import { agentKnowledgeController } from "./agent-knowledge.controller.js";
+import { knowledgeCreateSchema, knowledgeQuerySchema, knowledgeStatusSchema, knowledgeUpdateSchema } from "./agent-knowledge.schemas.js";
 
 export const agenteIaRoutes = Router();
 
@@ -38,4 +40,12 @@ agenteIaRoutes.patch("/prompts/:id", validate({ params: idParamSchema, body: pro
 agenteIaRoutes.patch("/prompts/:id/status", validate({ params: idParamSchema, body: promptStatusSchema }), asyncHandler(agentPromptsController.status));
 agenteIaRoutes.delete("/prompts/:id", requireRoles("ADMIN"), validate({ params: idParamSchema }), asyncHandler(agentPromptsController.remover));
 
-// Task 4 adiciona conhecimento e aprendizados abaixo neste mesmo router.
+// Conhecimento do Agent IA
+agenteIaRoutes.get("/knowledge", validate({ query: knowledgeQuerySchema }), asyncHandler(agentKnowledgeController.listar));
+agenteIaRoutes.get("/knowledge/:id", validate({ params: idParamSchema }), asyncHandler(agentKnowledgeController.buscar));
+agenteIaRoutes.post("/knowledge", validate({ body: knowledgeCreateSchema }), asyncHandler(agentKnowledgeController.criar));
+agenteIaRoutes.patch("/knowledge/:id", validate({ params: idParamSchema, body: knowledgeUpdateSchema }), asyncHandler(agentKnowledgeController.atualizar));
+agenteIaRoutes.patch("/knowledge/:id/status", validate({ params: idParamSchema, body: knowledgeStatusSchema }), asyncHandler(agentKnowledgeController.status));
+agenteIaRoutes.delete("/knowledge/:id", requireRoles("ADMIN"), validate({ params: idParamSchema }), asyncHandler(agentKnowledgeController.remover));
+
+// Task 4 adiciona aprendizados abaixo neste mesmo router.

@@ -567,6 +567,78 @@ export const swaggerSpec = swaggerJSDoc({
           responses: { "200": { description: "Status atualizado" }, "404": { description: "Prompt não encontrado" } }
         }
       },
+      "/admin/agent/knowledge": {
+        get: {
+          tags: ["Agente IA - Conhecimento"],
+          security: [{ cookieAuth: [] }],
+          summary: "Lista os itens de conhecimento do Agent IA",
+          parameters: [
+            { name: "status", in: "query", schema: { type: "string", enum: ["ATIVO", "INATIVO"] } },
+            { name: "type", in: "query", schema: { type: "string", enum: ["FAQ", "POLICY", "EVENT", "COURSE", "PAYMENT", "TICKET", "OTHER"] } }
+          ],
+          responses: { "200": { description: "Lista paginada de conhecimento" }, "401": { description: "Não autenticado" } }
+        },
+        post: {
+          tags: ["Agente IA - Conhecimento"],
+          security: [{ cookieAuth: [] }],
+          summary: "Cria um novo item de conhecimento do Agent IA",
+          requestBody: {
+            required: true,
+            content: {
+              "application/json": {
+                schema: {
+                  type: "object",
+                  required: ["title", "content", "type"],
+                  properties: {
+                    title: { type: "string" },
+                    content: { type: "string" },
+                    type: { type: "string", enum: ["FAQ", "POLICY", "EVENT", "COURSE", "PAYMENT", "TICKET", "OTHER"] },
+                    source: { type: "string" },
+                    status: { type: "string", enum: ["ATIVO", "INATIVO"] }
+                  }
+                }
+              }
+            }
+          },
+          responses: { "201": { description: "Conhecimento criado" }, "401": { description: "Não autenticado" } }
+        }
+      },
+      "/admin/agent/knowledge/{id}": {
+        get: {
+          tags: ["Agente IA - Conhecimento"],
+          security: [{ cookieAuth: [] }],
+          summary: "Busca um item de conhecimento do Agent IA por id",
+          parameters: [{ name: "id", in: "path", required: true, schema: { type: "integer" } }],
+          responses: { "200": { description: "Conhecimento encontrado" }, "404": { description: "Conhecimento não encontrado" } }
+        },
+        patch: {
+          tags: ["Agente IA - Conhecimento"],
+          security: [{ cookieAuth: [] }],
+          summary: "Atualiza campos de um item de conhecimento",
+          parameters: [{ name: "id", in: "path", required: true, schema: { type: "integer" } }],
+          responses: { "200": { description: "Conhecimento atualizado" }, "404": { description: "Conhecimento não encontrado" } }
+        },
+        delete: {
+          tags: ["Agente IA - Conhecimento"],
+          security: [{ cookieAuth: [] }],
+          summary: "Exclui um item de conhecimento (somente ADMIN)",
+          parameters: [{ name: "id", in: "path", required: true, schema: { type: "integer" } }],
+          responses: { "200": { description: "Conhecimento excluído" }, "403": { description: "Somente ADMIN" }, "404": { description: "Conhecimento não encontrado" } }
+        }
+      },
+      "/admin/agent/knowledge/{id}/status": {
+        patch: {
+          tags: ["Agente IA - Conhecimento"],
+          security: [{ cookieAuth: [] }],
+          summary: "Ativa ou desativa um item de conhecimento",
+          parameters: [{ name: "id", in: "path", required: true, schema: { type: "integer" } }],
+          requestBody: {
+            required: true,
+            content: { "application/json": { schema: { type: "object", required: ["status"], properties: { status: { type: "string", enum: ["ATIVO", "INATIVO"] } } } } }
+          },
+          responses: { "200": { description: "Status atualizado" }, "404": { description: "Conhecimento não encontrado" } }
+        }
+      },
       "/uploads/image": {
         post: {
           tags: ["Uploads"],
