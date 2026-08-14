@@ -424,6 +424,76 @@ export const swaggerSpec = swaggerJSDoc({
           responses: { "200": { description: "Configuração de canal atualizada" }, "401": { description: "Não autenticado" } }
         }
       },
+      "/admin/agent/rules": {
+        get: {
+          tags: ["Agente IA - Regras"],
+          security: [{ cookieAuth: [] }],
+          summary: "Lista as regras do Agent IA",
+          parameters: [{ name: "status", in: "query", schema: { type: "string", enum: ["ATIVO", "INATIVO"] } }],
+          responses: { "200": { description: "Lista paginada de regras" }, "401": { description: "Não autenticado" } }
+        },
+        post: {
+          tags: ["Agente IA - Regras"],
+          security: [{ cookieAuth: [] }],
+          summary: "Cria uma nova regra do Agent IA",
+          requestBody: {
+            required: true,
+            content: {
+              "application/json": {
+                schema: {
+                  type: "object",
+                  required: ["name", "content"],
+                  properties: {
+                    name: { type: "string" },
+                    description: { type: "string" },
+                    category: { type: "string", enum: ["GERAL", "VENDAS", "INSCRICAO", "ATENDIMENTO", "PAGAMENTO"] },
+                    content: { type: "string" },
+                    priority: { type: "integer" },
+                    status: { type: "string", enum: ["ATIVO", "INATIVO"] }
+                  }
+                }
+              }
+            }
+          },
+          responses: { "201": { description: "Regra criada" }, "401": { description: "Não autenticado" } }
+        }
+      },
+      "/admin/agent/rules/{id}": {
+        get: {
+          tags: ["Agente IA - Regras"],
+          security: [{ cookieAuth: [] }],
+          summary: "Busca uma regra do Agent IA por id",
+          parameters: [{ name: "id", in: "path", required: true, schema: { type: "integer" } }],
+          responses: { "200": { description: "Regra encontrada" }, "404": { description: "Regra não encontrada" } }
+        },
+        patch: {
+          tags: ["Agente IA - Regras"],
+          security: [{ cookieAuth: [] }],
+          summary: "Atualiza campos de uma regra do Agent IA",
+          parameters: [{ name: "id", in: "path", required: true, schema: { type: "integer" } }],
+          responses: { "200": { description: "Regra atualizada" }, "404": { description: "Regra não encontrada" } }
+        },
+        delete: {
+          tags: ["Agente IA - Regras"],
+          security: [{ cookieAuth: [] }],
+          summary: "Exclui uma regra do Agent IA (somente ADMIN)",
+          parameters: [{ name: "id", in: "path", required: true, schema: { type: "integer" } }],
+          responses: { "200": { description: "Regra excluída" }, "403": { description: "Somente ADMIN" }, "404": { description: "Regra não encontrada" } }
+        }
+      },
+      "/admin/agent/rules/{id}/status": {
+        patch: {
+          tags: ["Agente IA - Regras"],
+          security: [{ cookieAuth: [] }],
+          summary: "Ativa ou desativa uma regra do Agent IA",
+          parameters: [{ name: "id", in: "path", required: true, schema: { type: "integer" } }],
+          requestBody: {
+            required: true,
+            content: { "application/json": { schema: { type: "object", required: ["status"], properties: { status: { type: "string", enum: ["ATIVO", "INATIVO"] } } } } }
+          },
+          responses: { "200": { description: "Status atualizado" }, "404": { description: "Regra não encontrada" } }
+        }
+      },
       "/uploads/image": {
         post: {
           tags: ["Uploads"],
