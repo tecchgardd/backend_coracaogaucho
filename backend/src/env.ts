@@ -22,11 +22,20 @@ const envSchema = z.object({
   CLOUDINARY_CLOUD_NAME: z.string().optional(),
   CLOUDINARY_API_KEY: z.string().optional(),
   CLOUDINARY_API_SECRET: z.string().optional(),
-  UPLOAD_MAX_FILE_SIZE_MB: z.coerce.number().default(5)
+  UPLOAD_MAX_FILE_SIZE_MB: z.coerce.number().default(5),
+  OPENAI_API_KEY: z.string().optional(),
+  OPENAI_MODEL: z.string().optional(),
+  ZAPI_INSTANCE_ID: z.string().optional(),
+  ZAPI_TOKEN: z.string().optional(),
+  ZAPI_CLIENT_TOKEN: z.string().optional(),
+  ZAPI_WEBHOOK_SECRET: z.string().optional(),
+  AGENT_CRON_SECRET: z.string().optional()
 });
 
 export const env = envSchema.parse(process.env);
 export const googleAuthEnabled = Boolean(env.GOOGLE_CLIENT_ID && env.GOOGLE_CLIENT_SECRET);
+export const openaiConfigured = Boolean(env.OPENAI_API_KEY);
+export const zapiConfigured = Boolean(env.ZAPI_INSTANCE_ID && env.ZAPI_TOKEN && env.ZAPI_CLIENT_TOKEN);
 
 export const trustedOrigins = [
   "https://gabriel.expo.app",
