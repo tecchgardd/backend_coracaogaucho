@@ -8,6 +8,8 @@ import { agentChannelsController } from "./agent-channels.controller.js";
 import { channelBodySchema, channelParamSchema } from "./agent-channels.schemas.js";
 import { agentRulesController } from "./agent-rules.controller.js";
 import { ruleCreateSchema, ruleQuerySchema, ruleStatusSchema, ruleUpdateSchema } from "./agent-rules.schemas.js";
+import { agentPromptsController } from "./agent-prompts.controller.js";
+import { promptCreateSchema, promptQuerySchema, promptStatusSchema, promptUpdateSchema } from "./agent-prompts.schemas.js";
 
 export const agenteIaRoutes = Router();
 
@@ -28,4 +30,12 @@ agenteIaRoutes.patch("/rules/:id", validate({ params: idParamSchema, body: ruleU
 agenteIaRoutes.patch("/rules/:id/status", validate({ params: idParamSchema, body: ruleStatusSchema }), asyncHandler(agentRulesController.status));
 agenteIaRoutes.delete("/rules/:id", requireRoles("ADMIN"), validate({ params: idParamSchema }), asyncHandler(agentRulesController.remover));
 
-// Tasks 3 e 4 adicionam suas próprias rotas (prompts, conhecimento, aprendizados) abaixo neste mesmo router.
+// Prompts do Agent IA
+agenteIaRoutes.get("/prompts", validate({ query: promptQuerySchema }), asyncHandler(agentPromptsController.listar));
+agenteIaRoutes.get("/prompts/:id", validate({ params: idParamSchema }), asyncHandler(agentPromptsController.buscar));
+agenteIaRoutes.post("/prompts", validate({ body: promptCreateSchema }), asyncHandler(agentPromptsController.criar));
+agenteIaRoutes.patch("/prompts/:id", validate({ params: idParamSchema, body: promptUpdateSchema }), asyncHandler(agentPromptsController.atualizar));
+agenteIaRoutes.patch("/prompts/:id/status", validate({ params: idParamSchema, body: promptStatusSchema }), asyncHandler(agentPromptsController.status));
+agenteIaRoutes.delete("/prompts/:id", requireRoles("ADMIN"), validate({ params: idParamSchema }), asyncHandler(agentPromptsController.remover));
+
+// Task 4 adiciona conhecimento e aprendizados abaixo neste mesmo router.

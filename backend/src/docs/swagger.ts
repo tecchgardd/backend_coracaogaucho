@@ -494,6 +494,79 @@ export const swaggerSpec = swaggerJSDoc({
           responses: { "200": { description: "Status atualizado" }, "404": { description: "Regra não encontrada" } }
         }
       },
+      "/admin/agent/prompts": {
+        get: {
+          tags: ["Agente IA - Prompts"],
+          security: [{ cookieAuth: [] }],
+          summary: "Lista os prompts do Agent IA",
+          parameters: [
+            { name: "status", in: "query", schema: { type: "string", enum: ["ATIVO", "INATIVO"] } },
+            { name: "scope", in: "query", schema: { type: "string", enum: ["GENERAL", "VENDAS", "INSCRICAO"] } }
+          ],
+          responses: { "200": { description: "Lista paginada de prompts" }, "401": { description: "Não autenticado" } }
+        },
+        post: {
+          tags: ["Agente IA - Prompts"],
+          security: [{ cookieAuth: [] }],
+          summary: "Cria um novo prompt do Agent IA",
+          requestBody: {
+            required: true,
+            content: {
+              "application/json": {
+                schema: {
+                  type: "object",
+                  required: ["name", "content"],
+                  properties: {
+                    name: { type: "string" },
+                    description: { type: "string" },
+                    content: { type: "string" },
+                    tone: { type: "string" },
+                    scope: { type: "string", enum: ["GENERAL", "VENDAS", "INSCRICAO"] },
+                    status: { type: "string", enum: ["ATIVO", "INATIVO"] }
+                  }
+                }
+              }
+            }
+          },
+          responses: { "201": { description: "Prompt criado" }, "401": { description: "Não autenticado" } }
+        }
+      },
+      "/admin/agent/prompts/{id}": {
+        get: {
+          tags: ["Agente IA - Prompts"],
+          security: [{ cookieAuth: [] }],
+          summary: "Busca um prompt do Agent IA por id",
+          parameters: [{ name: "id", in: "path", required: true, schema: { type: "integer" } }],
+          responses: { "200": { description: "Prompt encontrado" }, "404": { description: "Prompt não encontrado" } }
+        },
+        patch: {
+          tags: ["Agente IA - Prompts"],
+          security: [{ cookieAuth: [] }],
+          summary: "Atualiza campos de um prompt (incrementa version automaticamente)",
+          parameters: [{ name: "id", in: "path", required: true, schema: { type: "integer" } }],
+          responses: { "200": { description: "Prompt atualizado" }, "404": { description: "Prompt não encontrado" } }
+        },
+        delete: {
+          tags: ["Agente IA - Prompts"],
+          security: [{ cookieAuth: [] }],
+          summary: "Exclui um prompt do Agent IA (somente ADMIN)",
+          parameters: [{ name: "id", in: "path", required: true, schema: { type: "integer" } }],
+          responses: { "200": { description: "Prompt excluído" }, "403": { description: "Somente ADMIN" }, "404": { description: "Prompt não encontrado" } }
+        }
+      },
+      "/admin/agent/prompts/{id}/status": {
+        patch: {
+          tags: ["Agente IA - Prompts"],
+          security: [{ cookieAuth: [] }],
+          summary: "Ativa ou desativa um prompt do Agent IA",
+          parameters: [{ name: "id", in: "path", required: true, schema: { type: "integer" } }],
+          requestBody: {
+            required: true,
+            content: { "application/json": { schema: { type: "object", required: ["status"], properties: { status: { type: "string", enum: ["ATIVO", "INATIVO"] } } } } }
+          },
+          responses: { "200": { description: "Status atualizado" }, "404": { description: "Prompt não encontrado" } }
+        }
+      },
       "/uploads/image": {
         post: {
           tags: ["Uploads"],
