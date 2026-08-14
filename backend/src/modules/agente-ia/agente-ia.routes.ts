@@ -12,6 +12,8 @@ import { agentPromptsController } from "./agent-prompts.controller.js";
 import { promptCreateSchema, promptQuerySchema, promptStatusSchema, promptUpdateSchema } from "./agent-prompts.schemas.js";
 import { agentKnowledgeController } from "./agent-knowledge.controller.js";
 import { knowledgeCreateSchema, knowledgeQuerySchema, knowledgeStatusSchema, knowledgeUpdateSchema } from "./agent-knowledge.schemas.js";
+import { agentLearningSuggestionsController } from "./agent-learning-suggestions.controller.js";
+import { learningSuggestionQuerySchema } from "./agent-learning-suggestions.schemas.js";
 
 export const agenteIaRoutes = Router();
 
@@ -48,4 +50,8 @@ agenteIaRoutes.patch("/knowledge/:id", validate({ params: idParamSchema, body: k
 agenteIaRoutes.patch("/knowledge/:id/status", validate({ params: idParamSchema, body: knowledgeStatusSchema }), asyncHandler(agentKnowledgeController.status));
 agenteIaRoutes.delete("/knowledge/:id", requireRoles("ADMIN"), validate({ params: idParamSchema }), asyncHandler(agentKnowledgeController.remover));
 
-// Task 4 adiciona aprendizados abaixo neste mesmo router.
+// Aprendizados sugeridos do Agent IA
+agenteIaRoutes.get("/learning", validate({ query: learningSuggestionQuerySchema }), asyncHandler(agentLearningSuggestionsController.listar));
+agenteIaRoutes.get("/learning/:id", validate({ params: idParamSchema }), asyncHandler(agentLearningSuggestionsController.buscar));
+agenteIaRoutes.patch("/learning/:id/approve", validate({ params: idParamSchema }), asyncHandler(agentLearningSuggestionsController.aprovar));
+agenteIaRoutes.patch("/learning/:id/reject", validate({ params: idParamSchema }), asyncHandler(agentLearningSuggestionsController.rejeitar));

@@ -639,6 +639,42 @@ export const swaggerSpec = swaggerJSDoc({
           responses: { "200": { description: "Status atualizado" }, "404": { description: "Conhecimento não encontrado" } }
         }
       },
+      "/admin/agent/learning": {
+        get: {
+          tags: ["Agente IA - Aprendizados"],
+          security: [{ cookieAuth: [] }],
+          summary: "Lista as sugestões de aprendizado do Agent IA",
+          parameters: [{ name: "status", in: "query", schema: { type: "string", enum: ["PENDENTE", "APROVADO", "REJEITADO"] } }],
+          responses: { "200": { description: "Lista paginada de sugestões" }, "401": { description: "Não autenticado" } }
+        }
+      },
+      "/admin/agent/learning/{id}": {
+        get: {
+          tags: ["Agente IA - Aprendizados"],
+          security: [{ cookieAuth: [] }],
+          summary: "Busca uma sugestão de aprendizado por id",
+          parameters: [{ name: "id", in: "path", required: true, schema: { type: "integer" } }],
+          responses: { "200": { description: "Sugestão encontrada" }, "404": { description: "Sugestão não encontrada" } }
+        }
+      },
+      "/admin/agent/learning/{id}/approve": {
+        patch: {
+          tags: ["Agente IA - Aprendizados"],
+          security: [{ cookieAuth: [] }],
+          summary: "Aprova uma sugestão de aprendizado (não cria conhecimento/regra automaticamente)",
+          parameters: [{ name: "id", in: "path", required: true, schema: { type: "integer" } }],
+          responses: { "200": { description: "Sugestão aprovada" }, "404": { description: "Sugestão não encontrada" } }
+        }
+      },
+      "/admin/agent/learning/{id}/reject": {
+        patch: {
+          tags: ["Agente IA - Aprendizados"],
+          security: [{ cookieAuth: [] }],
+          summary: "Rejeita uma sugestão de aprendizado",
+          parameters: [{ name: "id", in: "path", required: true, schema: { type: "integer" } }],
+          responses: { "200": { description: "Sugestão rejeitada" }, "404": { description: "Sugestão não encontrada" } }
+        }
+      },
       "/uploads/image": {
         post: {
           tags: ["Uploads"],
