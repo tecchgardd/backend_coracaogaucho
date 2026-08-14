@@ -52,13 +52,19 @@ export const agentPromptsService = {
   },
 
   async atualizarStatus(id: number, status: "ATIVO" | "INATIVO", actor: Actor) {
-    return this.atualizar(id, { status }, actor);
+    await this.buscar(id);
+    const prompt = await prisma.aiPrompt.update({
+      where: { id },
+      data: { status, updatedById: actor.colaboradorId }
+    });
+    await auditLog("AGENT_PROMPT_ATUALIZAR", id, actor, { status });
+    return prompt;
   },
 
   async remover(id: number, actor: Actor) {
-    await this.buscar(id);
+    const prompt = await this.buscar(id);
     await prisma.aiPrompt.delete({ where: { id } });
-    await auditLog("AGENT_PROMPT_EXCLUIR", id, actor, {});
+    await auditLog("AGENT_PROMPT_EXCLUIR", id, actor, prompt);
     return { ok: true };
   }
 };

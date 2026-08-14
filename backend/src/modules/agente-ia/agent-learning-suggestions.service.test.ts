@@ -5,7 +5,8 @@ import { prisma } from "../../lib/prisma.js";
 import { agentLearningSuggestionsService } from "./agent-learning-suggestions.service.js";
 
 async function cleanup() {
-  await prisma.auditLog.deleteMany({ where: { entity: "AiLearningSuggestion" } });
+  const testSuggestions = await prisma.aiLearningSuggestion.findMany({ where: { title: { startsWith: "TEST_" } }, select: { id: true } });
+  await prisma.auditLog.deleteMany({ where: { entity: "AiLearningSuggestion", entityId: { in: testSuggestions.map((s) => String(s.id)) } } });
   await prisma.aiLearningSuggestion.deleteMany({ where: { title: { startsWith: "TEST_" } } });
 }
 
@@ -18,6 +19,12 @@ async function seed(overrides: Partial<{ title: string; status: string }> = {}) 
     }
   });
 }
+
+test("service nao expoe criacao/edicao/exclusao manual", () => {
+  for (const method of ["criar", "atualizar", "remover", "atualizarStatus"]) {
+    assert.equal(method in agentLearningSuggestionsService, false);
+  }
+});
 
 test("buscar lanca 404 quando a sugestao nao existe", async () => {
   await assert.rejects(

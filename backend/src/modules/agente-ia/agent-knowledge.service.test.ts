@@ -5,7 +5,8 @@ import { prisma } from "../../lib/prisma.js";
 import { agentKnowledgeService } from "./agent-knowledge.service.js";
 
 async function cleanup() {
-  await prisma.auditLog.deleteMany({ where: { entity: "AiKnowledge" } });
+  const testKnowledge = await prisma.aiKnowledge.findMany({ where: { title: { startsWith: "TEST_" } }, select: { id: true } });
+  await prisma.auditLog.deleteMany({ where: { entity: "AiKnowledge", entityId: { in: testKnowledge.map((k) => String(k.id)) } } });
   await prisma.aiKnowledge.deleteMany({ where: { title: { startsWith: "TEST_" } } });
 }
 

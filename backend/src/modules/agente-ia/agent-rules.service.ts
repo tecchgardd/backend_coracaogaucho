@@ -53,9 +53,9 @@ export const agentRulesService = {
   },
 
   async remover(id: number, actor: Actor) {
-    await this.buscar(id);
+    const rule = await this.buscar(id);
     await prisma.aiRule.delete({ where: { id } });
-    await auditLog("AGENT_RULE_EXCLUIR", id, actor, {});
+    await auditLog("AGENT_RULE_EXCLUIR", id, actor, rule);
     return { ok: true };
   }
 };

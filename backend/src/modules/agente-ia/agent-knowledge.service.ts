@@ -53,9 +53,9 @@ export const agentKnowledgeService = {
   },
 
   async remover(id: number, actor: Actor) {
-    await this.buscar(id);
+    const knowledge = await this.buscar(id);
     await prisma.aiKnowledge.delete({ where: { id } });
-    await auditLog("AGENT_KNOWLEDGE_EXCLUIR", id, actor, {});
+    await auditLog("AGENT_KNOWLEDGE_EXCLUIR", id, actor, knowledge);
     return { ok: true };
   }
 };

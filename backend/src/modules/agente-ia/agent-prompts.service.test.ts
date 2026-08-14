@@ -5,7 +5,8 @@ import { prisma } from "../../lib/prisma.js";
 import { agentPromptsService } from "./agent-prompts.service.js";
 
 async function cleanup() {
-  await prisma.auditLog.deleteMany({ where: { entity: "AiPrompt" } });
+  const testPrompts = await prisma.aiPrompt.findMany({ where: { name: { startsWith: "TEST_" } }, select: { id: true } });
+  await prisma.auditLog.deleteMany({ where: { entity: "AiPrompt", entityId: { in: testPrompts.map((p) => String(p.id)) } } });
   await prisma.aiPrompt.deleteMany({ where: { name: { startsWith: "TEST_" } } });
 }
 
@@ -64,6 +65,7 @@ test("atualizarStatus alterna ATIVO/INATIVO", async () => {
 
     const updated = await agentPromptsService.atualizarStatus(prompt.id, "INATIVO", actor);
     assert.equal(updated.status, "INATIVO");
+    assert.equal(updated.version, 1);
   } finally {
     await cleanup();
   }

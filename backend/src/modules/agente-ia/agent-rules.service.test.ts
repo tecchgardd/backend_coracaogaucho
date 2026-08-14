@@ -5,7 +5,8 @@ import { prisma } from "../../lib/prisma.js";
 import { agentRulesService } from "./agent-rules.service.js";
 
 async function cleanup() {
-  await prisma.auditLog.deleteMany({ where: { entity: "AiRule" } });
+  const testRules = await prisma.aiRule.findMany({ where: { name: { startsWith: "TEST_" } }, select: { id: true } });
+  await prisma.auditLog.deleteMany({ where: { entity: "AiRule", entityId: { in: testRules.map((r) => String(r.id)) } } });
   await prisma.aiRule.deleteMany({ where: { name: { startsWith: "TEST_" } } });
 }
 

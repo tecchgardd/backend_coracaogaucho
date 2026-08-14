@@ -471,6 +471,23 @@ export const swaggerSpec = swaggerJSDoc({
           security: [{ cookieAuth: [] }],
           summary: "Atualiza campos de uma regra do Agent IA",
           parameters: [{ name: "id", in: "path", required: true, schema: { type: "integer" } }],
+          requestBody: {
+            content: {
+              "application/json": {
+                schema: {
+                  type: "object",
+                  properties: {
+                    name: { type: "string" },
+                    description: { type: "string" },
+                    category: { type: "string", enum: ["GERAL", "VENDAS", "INSCRICAO", "ATENDIMENTO", "PAGAMENTO"] },
+                    content: { type: "string" },
+                    priority: { type: "integer" },
+                    status: { type: "string", enum: ["ATIVO", "INATIVO"] }
+                  }
+                }
+              }
+            }
+          },
           responses: { "200": { description: "Regra atualizada" }, "404": { description: "Regra não encontrada" } }
         },
         delete: {
@@ -544,6 +561,23 @@ export const swaggerSpec = swaggerJSDoc({
           security: [{ cookieAuth: [] }],
           summary: "Atualiza campos de um prompt (incrementa version automaticamente)",
           parameters: [{ name: "id", in: "path", required: true, schema: { type: "integer" } }],
+          requestBody: {
+            content: {
+              "application/json": {
+                schema: {
+                  type: "object",
+                  properties: {
+                    name: { type: "string" },
+                    description: { type: "string" },
+                    content: { type: "string" },
+                    tone: { type: "string" },
+                    scope: { type: "string", enum: ["GENERAL", "VENDAS", "INSCRICAO"] },
+                    status: { type: "string", enum: ["ATIVO", "INATIVO"] }
+                  }
+                }
+              }
+            }
+          },
           responses: { "200": { description: "Prompt atualizado" }, "404": { description: "Prompt não encontrado" } }
         },
         delete: {
@@ -616,6 +650,22 @@ export const swaggerSpec = swaggerJSDoc({
           security: [{ cookieAuth: [] }],
           summary: "Atualiza campos de um item de conhecimento",
           parameters: [{ name: "id", in: "path", required: true, schema: { type: "integer" } }],
+          requestBody: {
+            content: {
+              "application/json": {
+                schema: {
+                  type: "object",
+                  properties: {
+                    title: { type: "string" },
+                    content: { type: "string" },
+                    type: { type: "string", enum: ["FAQ", "POLICY", "EVENT", "COURSE", "PAYMENT", "TICKET", "OTHER"] },
+                    source: { type: "string" },
+                    status: { type: "string", enum: ["ATIVO", "INATIVO"] }
+                  }
+                }
+              }
+            }
+          },
           responses: { "200": { description: "Conhecimento atualizado" }, "404": { description: "Conhecimento não encontrado" } }
         },
         delete: {
