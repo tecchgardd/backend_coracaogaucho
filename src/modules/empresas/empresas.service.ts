@@ -2,6 +2,7 @@ import { Readable } from "node:stream";
 import { cloudinary } from "../../lib/cloudinary.js";
 import { prisma } from "../../lib/prisma.js";
 import { AppError } from "../../utils/http.js";
+import { cloudinaryHttps } from "../../utils/url.js";
 import { getPagination } from "../common/schemas.js";
 
 const FOLDER = "coracao-gaucho/empresas";
@@ -73,6 +74,6 @@ export const empresasService = {
   },
   async listarPublicas() {
     const data = await prisma.empresa.findMany({ where: { ativo: true, publicado: true }, select: { id: true, nome: true, imagemUrl: true }, orderBy: [{ ordem: "asc" }, { nome: "asc" }, { createdAt: "asc" }] });
-    return { data, total: data.length };
+    return { data: data.map((empresa) => ({ ...empresa, imagemUrl: cloudinaryHttps(empresa.imagemUrl) })), total: data.length };
   }
 };

@@ -12,11 +12,19 @@ export function isValidCpf(value: string) {
   return calculateDigit(9) === Number(value[9]) && calculateDigit(10) === Number(value[10]);
 }
 
+export function isValidBrazilianPhone(value: string) {
+  if (!/^\d{10,11}$/.test(value)) return false;
+  const ddd = Number(value.slice(0, 2));
+  if (ddd < 11 || ddd > 99 || value[1] === "0") return false;
+  return value.length === 10 || value[2] === "9";
+}
+
 export const customerSignUpSchema = z.object({
   name: z.string().trim().min(5, "Informe o nome completo").max(150)
     .refine((value) => value.split(/\s+/).length >= 2, "Informe nome e sobrenome"),
   email: z.string().trim().email("E-mail inválido"),
   cpf: z.string().transform(digits).refine(isValidCpf, "CPF inválido"),
+  phone: z.string().transform(digits).refine(isValidBrazilianPhone, "Telefone inválido"),
   cep: z.string().transform(digits).refine((value) => value.length === 8, "CEP inválido"),
   address: z.string().trim().min(5, "Informe o endereço").max(300),
   password: z.string().min(8, "A senha deve ter pelo menos 8 caracteres").max(128)

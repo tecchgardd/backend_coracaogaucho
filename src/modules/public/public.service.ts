@@ -3,6 +3,7 @@ import type { z } from "zod";
 import { cloudinary } from "../../lib/cloudinary.js";
 import { prisma } from "../../lib/prisma.js";
 import { AppError } from "../../utils/http.js";
+import { cloudinaryHttps } from "../../utils/url.js";
 import type { publicAlbumPhotosQuerySchema, publicAlbumQuerySchema, publicEventQuerySchema } from "./public.schemas.js";
 
 const PHOTO_ROOT = "coracao-gaucho/fotos";
@@ -203,7 +204,7 @@ async function mapEvent(event: Prisma.EventoGetPayload<object>) {
     available,
     soldOut: available === 0,
     status: event.status,
-    banner: event.banner,
+    banner: cloudinaryHttps(event.banner),
     description: event.observacao,
     attraction: event.atracao
   };

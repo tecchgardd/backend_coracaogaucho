@@ -17,7 +17,7 @@ customerAuthRoutes.post(
     if (existingCustomer?.userId) throw new AppError("CPF já vinculado a outra conta", 409);
 
     const signUp = await auth.api.signUpEmail({
-      body: { name: data.name, email: data.email, password: data.password },
+      body: { name: data.name, email: data.email, password: data.password, phone: data.phone },
       headers: fromNodeHeaders(req.headers),
       returnHeaders: true
     });
@@ -27,11 +27,11 @@ customerAuthRoutes.post(
       if (existingCustomer) {
         await prisma.customer.update({
           where: { id: existingCustomer.id },
-          data: { userId: user.id, nome: data.name, email: data.email, cpf: data.cpf, cep: data.cep, endereco: data.address }
+          data: { userId: user.id, nome: data.name, email: data.email, cpf: data.cpf, telefone: data.phone, cep: data.cep, endereco: data.address }
         });
       } else {
         await prisma.customer.create({
-          data: { userId: user.id, nome: data.name, email: data.email, cpf: data.cpf, cep: data.cep, endereco: data.address, telefone: "" }
+          data: { userId: user.id, nome: data.name, email: data.email, cpf: data.cpf, cep: data.cep, endereco: data.address, telefone: data.phone }
         });
       }
     } catch (error) {

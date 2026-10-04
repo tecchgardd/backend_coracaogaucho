@@ -63,7 +63,7 @@ export const fotosService = {
           data: {
             originalName: file.originalname,
             publicId: result.public_id,
-            url: result.url,
+            url: result.secure_url,
             secureUrl: result.secure_url,
             format: result.format,
             bytes: result.bytes,
